@@ -4,6 +4,12 @@
   <img alt="Deskflow" src="https://github.com/user-attachments/assets/f005b958-24df-4f4a-9bfd-4f834dae59d6">
 </picture>
 
+> [!IMPORTANT]
+> **This is a downstream fork** that adds a headless server backend, so the shared keyboard and mouse
+> can live on a Raspberry Pi next to [Bragi](https://github.com/NickMarcha/bragi) instead of on one of your desktops.
+> See [HEADLESS.md](../HEADLESS.md) for the goal, what changed and how it tracks upstream.
+> Everything below is upstream's README. For upstream Deskflow, go to [deskflow/deskflow](https://github.com/deskflow/deskflow).
+
 **Deskflow** is a free and open source keyboard and mouse sharing app.
 Use the keyboard, mouse, or trackpad of one computer to control nearby computers,
 and work seamlessly between them.

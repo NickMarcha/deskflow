@@ -1,0 +1,40 @@
+# Opens an issue when upstream Deskflow has a release newer than the one the
+# headless branch is based on. The rebase itself is done by hand (see HEADLESS.md).
+name: headless-upstream-check
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: headless
+          fetch-depth: 0
+
+      - name: Compare with upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git fetch --tags --force https://github.com/deskflow/deskflow.git 'refs/tags/v*:refs/tags/v*' >/dev/null 2>&1
+          base=$(git describe --tags --abbrev=0 --match 'v[0-9]*')
+          latest=$(gh api repos/deskflow/deskflow/releases/latest --jq .tag_name)
+          echo "headless is on $base, upstream latest is $latest"
+          if [ "$base" = "$latest" ]; then
+            exit 0
+          fi
+          title="Rebase headless onto upstream $latest"
+          if gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number' | grep -q .; then
+            echo "issue already open"
+            exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$(printf 'Upstream released %s; `headless` is still on %s.\n\n```sh\ngit fetch upstream --tags\ngit rebase --onto %s %s headless\ngit push --force-with-lease origin headless\n```\n\nRelease notes: https://github.com/deskflow/deskflow/releases/tag/%s' "$latest" "$base" "$latest" "$base" "$latest")"

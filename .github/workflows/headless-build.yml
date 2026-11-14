@@ -1,0 +1,86 @@
+# Builds the headless fork for the Raspberry Pi (Debian trixie, arm64).
+name: headless-build
+
+on:
+  push:
+    branches: [headless]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish the .deb as a GitHub release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  deb-trixie-arm64:
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    timeout-minutes: 40
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git ca-certificates file \
+            cmake build-essential ninja-build \
+            xorg-dev libx11-dev libxtst-dev libssl-dev libxkbfile-dev \
+            qt6-base-dev qt6-tools-dev libxkbregistry-dev libxkbcommon-dev \
+            libei-dev libportal-dev help2man libinput-dev libudev-dev >/dev/null
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git fetch --tags --force https://github.com/deskflow/deskflow.git 'refs/tags/v*:refs/tags/v*' >/dev/null 2>&1 || true
+          base=$(git describe --tags --abbrev=0 --match 'v[0-9]*')
+          n=$(git rev-list --count "$base"..HEAD)
+          version="${base#v}-headless.${n}"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version (on top of $base)"
+
+      - name: Configure
+        run: >
+          cmake -Bbuild -G Ninja -DCMAKE_BUILD_TYPE=Release -DSKIP_BUILD_TESTS=ON
+          -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DCMAKE_INSTALL_PREFIX=/usr
+          -DPACKAGE_VERSION_LABEL="${{ steps.version.outputs.version }}"
+
+      - name: Check the evdev backend is enabled
+        run: grep -q "WINAPI_EVDEV" build/build.ninja
+
+      - name: Build package
+        run: cmake --build build --config Release -j4 --target package
+
+      - name: Inspect package
+        id: deb
+        shell: bash
+        run: |
+          deb=$(ls build/*.deb | head -1)
+          echo "path=$deb" >> "$GITHUB_OUTPUT"
+          dpkg-deb -I "$deb"
+          strings build/bin/deskflow-core | grep -q "using headless evdev backend"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deskflow-${{ steps.version.outputs.version }}-debian-trixie-aarch64
+          path: ${{ steps.deb.outputs.path }}
+
+      - name: Release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          apt-get install -y -qq --no-install-recommends gh >/dev/null
+          tag="headless-v${{ steps.version.outputs.version }}"
+          gh release create "$tag" "${{ steps.deb.outputs.path }}" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --notes "Headless server build on top of upstream ${{ steps.version.outputs.base }}. See HEADLESS.md."
