@@ -1383,7 +1383,12 @@ void Server::handleToggleComputerEvent(const Event &)
   std::vector<std::string> computers;
   getClients(computers);
 
-  if (computers.size() < 2) {
+  // a headless primary is never a destination
+  if (m_headlessPrimary) {
+    std::erase(computers, getName(m_primaryClient));
+  }
+
+  if (computers.size() < (m_headlessPrimary ? 1u : 2u)) {
     LOG_ERR("not enough computers to toggle");
     return;
   }
@@ -1391,15 +1396,22 @@ void Server::handleToggleComputerEvent(const Event &)
   // Find the current active computer
   std::string currentComputer = getName(m_active);
   auto it = std::ranges::find(computers, currentComputer);
-  if (it == computers.end()) {
+  std::vector<std::string>::iterator nextIt;
+  if (it != computers.end()) {
+    // Find the next computer
+    nextIt = it + 1;
+    if (nextIt == computers.end()) {
+      nextIt = computers.begin();
+    }
+  } else if (m_headlessPrimary && m_active == m_primaryClient) {
+    nextIt = computers.begin();
+  } else {
     LOG_ERR("current computer not found in list");
     return;
   }
 
-  // Find the next computer
-  auto nextIt = it + 1;
-  if (nextIt == computers.end()) {
-    nextIt = computers.begin();
+  if (*nextIt == currentComputer) {
+    return;
   }
 
   // Find the client for the next computer
