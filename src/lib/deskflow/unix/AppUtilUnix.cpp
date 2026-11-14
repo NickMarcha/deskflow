@@ -91,6 +91,11 @@ std::string AppUtilUnix::getCurrentLanguageCode()
 
 #if WINAPI_XWINDOWS
 
+  // A headless server has no X display at all; this runs on every key press,
+  // so return quietly instead of logging a warning each time.
+  if (qEnvironmentVariableIsEmpty("DISPLAY"))
+    return result;
+
   auto display = XOpenDisplay(nullptr);
   if (!display) {
     LOG_WARN("failed to open x11 default display");
