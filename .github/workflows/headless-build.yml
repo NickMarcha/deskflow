@@ -65,7 +65,8 @@ jobs:
           deb=$(ls build/*.deb | head -1)
           echo "path=$deb" >> "$GITHUB_OUTPUT"
           dpkg-deb -I "$deb"
-          strings build/bin/deskflow-core | grep -q "using headless evdev backend"
+          strings build/bin/deskflow-core > /tmp/strings.txt
+          grep -q "using headless evdev backend" /tmp/strings.txt
 
       - uses: actions/upload-artifact@v4
         with:
