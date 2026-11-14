@@ -10,6 +10,12 @@ if(UNIX AND NOT APPLE)
   pkg_check_modules(LIBPORTAL REQUIRED QUIET "libportal >= ${REQUIRED_LIBPORTAL_VERSION}")
   message(STATUS "libportal version: ${LIBPORTAL_VERSION}")
 
+  # Optional headless primary backend (EvdevComputer)
+  pkg_check_modules(LIBINPUT QUIET libinput libudev)
+  if(LIBINPUT_FOUND)
+    message(STATUS "libinput found, building headless evdev backend")
+  endif()
+
   # Check if we have the restore ability in the IC portal
   include(CMakePushCheckState)
   include(CheckSymbolExists)
@@ -153,6 +159,14 @@ elseif(UNIX)
       EiKeyState.cpp
       EiKeyState.h
     )
+    if(LIBINPUT_FOUND)
+      list(APPEND PLATFORM_SOURCES
+        EvdevComputer.cpp
+        EvdevComputer.h
+        EvdevEventQueueBuffer.cpp
+        EvdevEventQueueBuffer.h
+      )
+    endif()
     # The Portal sources also require EI.
     if(LIBPORTAL_FOUND)
       list(APPEND PLATFORM_SOURCES
@@ -210,5 +224,10 @@ if(UNIX)
         Qt6::Gui
         ${LIBXKBCOMMON_LINK_LIBRARIES}
         ${LIBEI_LINK_LIBRARIES} ${LIBPORTAL_LINK_LIBRARIES})
+    if(LIBINPUT_FOUND)
+      target_compile_definitions(platform PUBLIC WINAPI_EVDEV)
+      target_include_directories(platform PRIVATE ${LIBINPUT_INCLUDE_DIRS})
+      target_link_libraries(platform PRIVATE ${LIBINPUT_LINK_LIBRARIES})
+    endif()
   endif()
 endif()

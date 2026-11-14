@@ -339,6 +339,11 @@ KeyID EiKeyState::mapKeyFromKeyval(uint32_t keyval) const
   return keyid;
 }
 
+bool EiKeyState::keyRepeats(std::uint32_t keyval) const
+{
+  return xkb_keymap_key_repeats(m_xkbKeymap, keyval) != 0;
+}
+
 void EiKeyState::updateXkbState(uint32_t keyval, bool isPressed)
 {
   LOG_VERBOSE("update key state: keyval=%d pressed=%i", keyval, isPressed);

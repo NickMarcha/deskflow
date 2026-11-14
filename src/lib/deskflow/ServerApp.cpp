@@ -43,6 +43,10 @@
 #include "platform/EiComputer.h"
 #endif
 
+#if WINAPI_EVDEV
+#include "platform/EvdevComputer.h"
+#endif
+
 #if defined(Q_OS_MACOS)
 #include "platform/OSXComputer.h"
 #endif
@@ -398,6 +402,12 @@ deskflow::Computer *ServerApp::createComputer()
 #elif defined(Q_OS_MACOS)
   return new deskflow::Computer(new OSXComputer(getEvents(), true), getEvents());
 #else
+#if WINAPI_EVDEV
+  if (qEnvironmentVariable("DESKFLOW_BACKEND") == QStringLiteral("evdev")) {
+    LOG_INFO("using headless evdev backend");
+    return new deskflow::Computer(new deskflow::EvdevComputer(getEvents()), getEvents());
+  }
+#endif
   if (deskflow::platform::isWayland()) {
 #if WINAPI_LIBEI
     LOG_INFO("detected wayland platform");
