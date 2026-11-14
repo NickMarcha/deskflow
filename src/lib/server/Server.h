@@ -136,6 +136,17 @@ public:
   ownership of \p primaryClient.
   */
   Server(ServerConfig &config, PrimaryClient *primaryClient, deskflow::Computer *computer, IEventQueue *events);
+
+  //! Treat the primary computer as having no screen of its own.
+  /*!
+  For a headless server (EvdevComputer). The cursor jumps to the first client
+  that connects, and when the active client disconnects it jumps to the most
+  recently used client that is still connected instead of back to the primary.
+  */
+  void setHeadlessPrimary(bool headless)
+  {
+    m_headlessPrimary = headless;
+  }
   Server(Server const &) = delete;
   Server(Server &&) = delete;
   ~Server();
@@ -378,6 +389,13 @@ private:
 
   // the client with focus
   BaseClientProxy *m_active = nullptr;
+
+  // headless primary: never park the cursor on the primary computer
+  bool m_headlessPrimary = false;
+  // client names, most recently active first (headless primary only)
+  std::vector<std::string> m_recentClients;
+  void noteActiveClient(const BaseClientProxy *client);
+  void leaveHeadlessPrimary();
 
   // current configuration
   ServerConfig *m_config = nullptr;

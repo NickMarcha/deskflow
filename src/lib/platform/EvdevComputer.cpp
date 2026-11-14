@@ -68,6 +68,41 @@ const libinput_interface s_interface = {
     .close_restricted = closeRestrictedTrampoline,
 };
 
+bool hasProperty(udev_device *dev, const char *key)
+{
+  const char *v = udev_device_get_property_value(dev, key);
+  return v && std::strcmp(v, "1") == 0;
+}
+
+//! True if another input node under the same USB device is a keyboard or mouse.
+bool hasInputSibling(udev_device *dev)
+{
+  udev_device *usb = udev_device_get_parent_with_subsystem_devtype(dev, "usb", "usb_device");
+  if (!usb) {
+    return false;
+  }
+  bool found = false;
+  udev_enumerate *e = udev_enumerate_new(udev_device_get_udev(dev));
+  udev_enumerate_add_match_subsystem(e, "input");
+  udev_enumerate_add_match_parent(e, usb);
+  udev_enumerate_scan_devices(e);
+  udev_list_entry *entry;
+  udev_list_entry_foreach(entry, udev_enumerate_get_list_entry(e))
+  {
+    udev_device *other = udev_device_new_from_syspath(udev_device_get_udev(dev), udev_list_entry_get_name(entry));
+    if (other) {
+      found = udev_device_get_devnode(other) && (hasProperty(other, "ID_INPUT_KEYBOARD") ||
+                                                 hasProperty(other, "ID_INPUT_MOUSE"));
+      udev_device_unref(other);
+    }
+    if (found) {
+      break;
+    }
+  }
+  udev_enumerate_unref(e);
+  return found;
+}
+
 ButtonID mapButton(std::uint32_t code)
 {
   switch (code) {
@@ -180,15 +215,20 @@ int EvdevComputer::openRestricted(const char *path, int flags)
   std::string name;
   bool isKeyboard = false;
   bool isPointer = false;
+  bool isCompanion = false;
   struct stat st{};
   if (stat(path, &st) == 0) {
     if (udev_device *dev = udev_device_new_from_devnum(m_udev, 'c', st.st_rdev); dev) {
-      auto prop = [dev](const char *key) {
-        const char *v = udev_device_get_property_value(dev, key);
-        return v && std::strcmp(v, "1") == 0;
-      };
-      isKeyboard = prop("ID_INPUT_KEYBOARD");
-      isPointer = prop("ID_INPUT_MOUSE") || prop("ID_INPUT_TOUCHPAD") || prop("ID_INPUT_POINTINGSTICK");
+      isKeyboard = hasProperty(dev, "ID_INPUT_KEYBOARD");
+      isPointer = hasProperty(dev, "ID_INPUT_MOUSE") || hasProperty(dev, "ID_INPUT_TOUCHPAD");
+      // A keys-only node (media, power or volume keys) is taken only when the same
+      // USB device also has a keyboard or mouse, e.g. a receiver's Consumer Control
+      // node. A headset's volume buttons have no such sibling and stay untouched.
+      // ID_INPUT_POINTINGSTICK is treated the same way rather than trusted on its
+      // own: hwdb sets it on every node of some TrackPoint keyboards.
+      if (!isKeyboard && !isPointer && (hasProperty(dev, "ID_INPUT_KEY") || hasProperty(dev, "ID_INPUT_POINTINGSTICK"))) {
+        isCompanion = hasInputSibling(dev);
+      }
       if (udev_device *parent = udev_device_get_parent(dev)) {
         if (const char *n = udev_device_get_sysattr_value(parent, "name")) {
           name = n;
@@ -198,7 +238,7 @@ int EvdevComputer::openRestricted(const char *path, int flags)
     }
   }
 
-  if (!wantDevice(name, isKeyboard, isPointer)) {
+  if (!wantDevice(name, isKeyboard || isCompanion, isPointer)) {
     LOG_DEBUG("evdev: skipping %s (%s)", path, name.c_str());
     return -EACCES;
   }
@@ -212,7 +252,10 @@ int EvdevComputer::openRestricted(const char *path, int flags)
   if (ioctl(fd, EVIOCGRAB, 1) != 0) {
     LOG_WARN("evdev: cannot grab %s: %s", path, strerror(errno));
   }
-  LOG_INFO("evdev: using %s (%s)%s%s", path, name.c_str(), isKeyboard ? " keyboard" : "", isPointer ? " pointer" : "");
+  LOG_INFO(
+      "evdev: using %s (%s)%s%s%s", path, name.c_str(), isKeyboard ? " keyboard" : "", isPointer ? " pointer" : "",
+      isCompanion ? " keys" : ""
+  );
   return fd;
 }
 

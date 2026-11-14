@@ -474,6 +474,9 @@ ClientListener *ServerApp::openClientListener(const NetworkAddress &address)
 Server *ServerApp::openServer(ServerConfig &config, PrimaryClient *primaryClient)
 {
   auto *server = new Server(config, primaryClient, m_serverComputer, getEvents());
+#if WINAPI_EVDEV
+  server->setHeadlessPrimary(qEnvironmentVariable("DESKFLOW_BACKEND") == QStringLiteral("evdev"));
+#endif
   try {
     getEvents()->addHandler(EventTypes::ServerComputerSwitched, server, [this](const auto &) {
       handleComputerSwitched();

@@ -281,6 +281,44 @@ void Server::adoptClient(BaseClientProxy *client)
   // send notification
   auto *info = new Server::ComputerConnectedInfo(getName(client));
   m_events->addEvent(Event(EventTypes::ServerConnected, m_primaryClient->getEventTarget(), info));
+
+  // a headless primary has nowhere to show the cursor, so go to the new client
+  if (m_headlessPrimary && m_active == m_primaryClient) {
+    LOG_INFO("headless: switching to newly connected \"%s\"", getName(client).c_str());
+    jumpToComputer(client);
+  }
+}
+
+void Server::noteActiveClient(const BaseClientProxy *client)
+{
+  if (!m_headlessPrimary || client == m_primaryClient) {
+    return;
+  }
+  const std::string name = getName(client);
+  std::erase(m_recentClients, name);
+  m_recentClients.insert(m_recentClients.begin(), name);
+}
+
+void Server::leaveHeadlessPrimary()
+{
+  if (!m_headlessPrimary || m_active != m_primaryClient) {
+    return;
+  }
+  for (const auto &name : m_recentClients) {
+    if (auto it = m_clients.find(name); it != m_clients.end() && it->second != m_primaryClient) {
+      LOG_INFO("headless: active client gone, switching to \"%s\"", name.c_str());
+      jumpToComputer(it->second);
+      return;
+    }
+  }
+  for (const auto &[name, other] : m_clients) {
+    if (other != m_primaryClient) {
+      LOG_INFO("headless: active client gone, switching to \"%s\"", name.c_str());
+      jumpToComputer(other);
+      return;
+    }
+  }
+  LOG_INFO("headless: no clients connected, waiting");
 }
 
 void Server::disconnect()
@@ -485,6 +523,7 @@ void Server::switchComputer(BaseClientProxy *dst, int32_t x, int32_t y, bool for
 
     // cut over
     m_active = dst;
+    noteActiveClient(dst);
 
     // increment enter sequence number
     ++m_seqNum;
@@ -1292,6 +1331,7 @@ void Server::handleClientDisconnected(BaseClientProxy *client)
   // active client.  we don't care so just handle it both ways.
   removeActiveClient(client);
   removeOldClient(client);
+  leaveHeadlessPrimary();
 
   // m_clients always contains the primary (server) computer, so 1 means no remote clients.
   using enum deskflow::core::ConnectionState;
