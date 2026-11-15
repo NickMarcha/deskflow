@@ -328,7 +328,9 @@ async function api(path, body) {
     headers: { "Content-Type": "application/json", "X-Deskflow-Webui": "1" },
     body: JSON.stringify(body),
   };
-  const res = await fetch(path, opts);
+  // Relative, so the page also works behind a path prefix (Bragi serves it
+  // at /kvm/setup/ behind its login).
+  const res = await fetch(path.replace(/^\//, ""), opts);
   const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
