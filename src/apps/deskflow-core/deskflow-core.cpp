@@ -148,6 +148,13 @@ int main(int argc, char **argv)
         },
         Qt::DirectConnection
     );
+    QObject::connect(
+        ipcServer, &deskflow::core::ipc::CoreIpcServer::switchRequested, ipcServer,
+        [serverApp](const QString &computer, const deskflow::core::ipc::CoreIpcServer::KeystrokeReply &reply) {
+          serverApp->requestSwitch(computer.toStdString(), reply);
+        },
+        Qt::DirectConnection
+    );
   }
   ipcServer->listen();
 

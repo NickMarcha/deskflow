@@ -673,6 +673,14 @@ class App:
         self.core_command(line)
         return {"ok": True}
 
+    def switch(self, body: dict) -> dict:
+        """Makes a connected computer the active one."""
+        computer = body.get("computer")
+        if not isinstance(computer, str) or not NAME_RE.fullmatch(computer):
+            raise ApiError("computer must be a computer name")
+        self.core_command(f"switch={computer}")
+        return {"ok": True}
+
     def save_input(self, body: dict) -> dict:
         with self.lock:
             values = {}
@@ -754,6 +762,7 @@ def make_handler(app: App):
                 "/api/identify": app.identify,
                 "/api/batteries": app.save_batteries,
                 "/api/keystroke": app.keystroke,
+                "/api/switch": app.switch,
             }
             route = routes.get(self.path)
             if route is None:

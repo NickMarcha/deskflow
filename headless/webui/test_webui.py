@@ -39,7 +39,12 @@ class FakeCore(threading.Thread):
                 line = conn.makefile().readline().rstrip("\n")
                 self.lines.append(line)
                 conn.sendall(b"bye\n")  # broadcasts to the GUI may arrive first
-                conn.sendall(b"error=unable to parse key\n" if "Bogus" in line else b"ok\n")
+                if "Bogus" in line:
+                    conn.sendall(b"error=unable to parse key\n")
+                elif "ghost" in line:
+                    conn.sendall(b"error=ghost isn't connected\n")
+                else:
+                    conn.sendall(b"ok\n")
 
 
 class UnixConnection(http.client.HTTPConnection):
@@ -70,12 +75,12 @@ class KeystrokeTests(unittest.TestCase):
         self.core.sock.close()
         self.tmp.cleanup()
 
-    def post(self, body, header=True):
+    def post(self, body, header=True, path="/api/keystroke"):
         conn = UnixConnection(self.socket_path)
         headers = {"Content-Type": "application/json"}
         if header:
             headers["X-Deskflow-Webui"] = "1"
-        conn.request("POST", "/api/keystroke", json.dumps(body), headers)
+        conn.request("POST", path, json.dumps(body), headers)
         res = conn.getresponse()
         data = json.loads(res.read())
         conn.close()
@@ -116,6 +121,21 @@ class KeystrokeTests(unittest.TestCase):
         status, data = self.post({"keys": "M"})
         self.assertEqual(status, 503)
         self.assertFalse(data["ok"])
+
+    def test_switch_to_a_computer(self):
+        status, data = self.post({"computer": "sage-dev"}, path="/api/switch")
+        self.assertEqual((status, data), (200, {"ok": True}))
+        self.assertEqual(self.core.lines, ["switch=sage-dev"])
+
+    def test_switch_to_a_computer_that_isnt_connected(self):
+        status, data = self.post({"computer": "ghost"}, path="/api/switch")
+        self.assertEqual((status, data), (400, {"ok": False, "error": "ghost isn't connected"}))
+
+    def test_switch_rejects_bad_names(self):
+        for body in ({}, {"computer": ""}, {"computer": "a\nstop"}, {"computer": "../x"}, {"computer": ["sage"]}):
+            status, _ = self.post(body, path="/api/switch")
+            self.assertEqual(status, 400, body)
+        self.assertEqual(self.core.lines, [])
 
     def test_socket_mode(self):
         self.assertEqual(stat.S_IMODE(self.socket_path.stat().st_mode), 0o660)

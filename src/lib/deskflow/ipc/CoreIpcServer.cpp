@@ -67,6 +67,10 @@ void CoreIpcServer::processCommand(QLocalSocket *clientSocket, const QString &co
     processKeystroke(clientSocket, parts.mid(1).join('='));
     return;
   }
+  if (command == QStringLiteral("switch")) {
+    processSwitch(clientSocket, parts.mid(1).join('='));
+    return;
+  }
   LOG_WARN("core ipc server got unknown command: %s", command.toUtf8().constData());
 }
 
@@ -86,6 +90,34 @@ void CoreIpcServer::processKeystroke(QLocalSocket *clientSocket, const QString &
   QPointer<CoreIpcServer> self(this);
   QPointer<QLocalSocket> socket(clientSocket);
   Q_EMIT keystrokeRequested(keystroke, [self, socket](const QString &error) {
+    QMetaObject::invokeMethod(
+        QCoreApplication::instance(),
+        [self, socket, error] {
+          if (self && socket) {
+            self->reply(socket, error);
+          }
+        },
+        Qt::QueuedConnection
+    );
+  });
+}
+
+void CoreIpcServer::processSwitch(QLocalSocket *clientSocket, const QString &computer)
+{
+  if (!isSameUser(clientSocket)) {
+    LOG_WARN("core ipc server refused switch from another user");
+    writeToClientSocket(clientSocket, QStringLiteral("error=permission denied"));
+    return;
+  }
+  if (!isSignalConnected(QMetaMethod::fromSignal(&CoreIpcServer::switchRequested))) {
+    writeToClientSocket(clientSocket, QStringLiteral("error=switch needs server mode"));
+    return;
+  }
+
+  LOG_DEBUG("core ipc server got switch: %s", computer.toUtf8().constData());
+  QPointer<CoreIpcServer> self(this);
+  QPointer<QLocalSocket> socket(clientSocket);
+  Q_EMIT switchRequested(computer, [self, socket](const QString &error) {
     QMetaObject::invokeMethod(
         QCoreApplication::instance(),
         [self, socket, error] {
