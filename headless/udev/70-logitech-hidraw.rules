@@ -1,0 +1,3 @@
+# Lets the input group (the Deskflow headless server) talk HID++ to Logitech
+# receivers and devices: remaps, battery, extra buttons. Copy to /etc/udev/rules.d/.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0660", GROUP="input"

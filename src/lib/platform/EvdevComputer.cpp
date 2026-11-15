@@ -201,8 +201,9 @@ EvdevComputer::EvdevComputer(IEventQueue *events)
   m_events->addHandler(EventTypes::System, m_events->getSystemTarget(), [this](const auto &e) {
     handleSystemEvent(e);
   });
-  // opt-in: on a Raspberry Pi 4 with a Logi Bolt receiver, holding the HID++
-  // node open stops the mouse from moving (#125), so it stays off by default
+  // opt-in: on a Raspberry Pi 4 a Logi Bolt receiver with all four interfaces
+  // active can't also have its HID++ node held open without the mouse
+  // stopping; see headless/udev/71-logitech-bolt-no-touchpad.rules
   if (qEnvironmentVariable("DESKFLOW_EVDEV_HIDPP") == QStringLiteral("1")) {
     m_hidppWake = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (m_hidppWake >= 0) {

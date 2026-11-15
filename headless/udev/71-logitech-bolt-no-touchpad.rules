@@ -1,0 +1,6 @@
+# Raspberry Pi 4 + Logi Bolt receiver: disable the receiver's interface 3
+# (touchpad/multitouch). The Pi 4 USB controller services only three of the
+# receiver's four 1 ms interrupt endpoints at once, so with this one active,
+# keeping the HID++ interface (2) open stops the mouse (interface 1).
+# Do not use this if a Logitech touchpad is paired to the receiver.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c548", ATTR{bInterfaceNumber}=="03", ATTR{authorized}="0"

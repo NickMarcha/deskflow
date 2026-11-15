@@ -81,7 +81,9 @@ Both need read/write access to the receiver's hidraw node, for example with this
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0660", GROUP="input"
 ```
 
-`DESKFLOW_EVDEV_HIDPP_MANAGER=0` turns this off. `DESKFLOW_EVDEV_HIDPP=1` instead keeps the node open and reads diverted controls directly, with no remap needed, but on a Raspberry Pi 4 with a Logi Bolt receiver an open node stops the mouse from moving, so it is off by default.
+`DESKFLOW_EVDEV_HIDPP_MANAGER=0` turns this off.
+
+`DESKFLOW_EVDEV_HIDPP=1` goes further: it keeps the node open and diverts bound controls, so a control like the thumb button becomes an input of its own (bind it in the web UI) instead of borrowing another button's identity through a remap. It's off by default because of a Raspberry Pi 4 limitation: its USB controller services only three of a Logi Bolt receiver's four 1 ms interrupt endpoints at once, and with all four active the mouse stops moving. `headless/udev/71-logitech-bolt-no-touchpad.rules` disables the receiver's interface 3 (only used by Logitech touchpads), which leaves room. `headless/udev/70-logitech-hidraw.rules` gives the `input` group access to the hidraw nodes.
 
 ## Staying in sync with upstream
 
