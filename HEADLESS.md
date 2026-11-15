@@ -112,7 +112,7 @@ KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0660", GR
 
 ## Other batteries
 
-The web UI also shows batteries the kernel reports for USB HID devices (`/sys/class/power_supply`, for example keyboards that send "Battery Strength"), keyed by USB port so two devices of the same model stay apart, and the HyperX Cloud III S Wireless headset over its vendor HID protocol (read every 5 minutes). The headset's dongle only answers on Linux when the kernel asks for its full configuration descriptor at the first enumeration: add `usbcore.quirks=03f0:06be:r` (or `03f0:02cc:r`) to the kernel command line, then power-cycle the dongle once. See `headless/udev/72-hyperx-cloud3s-hidraw.rules`.
+The web UI also shows batteries the kernel reports for USB HID devices (`/sys/class/power_supply`, for example keyboards that send "Battery Strength"), keyed by USB port so two devices of the same model stay apart. The HyperX headset on the same Pi is handled by Bragi (battery, buttons, EQ), so this UI leaves it alone.
 
 ## Staying in sync with upstream
 
