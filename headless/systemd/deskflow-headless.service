@@ -12,6 +12,8 @@ Environment=QT_QPA_PLATFORM=offscreen
 Environment=DESKFLOW_STATUS_DIR=%t/deskflow-headless
 # input options written by the web UI (DESKFLOW_EVDEV_*, XKB_DEFAULT_LAYOUT)
 EnvironmentFile=-%h/.config/deskflow-headless/env
+# button and key remaps, edited in the web UI and reloaded on the next input
+Environment=DESKFLOW_EVDEV_BINDINGS=%h/.config/deskflow-headless/bindings.json
 RuntimeDirectory=deskflow-headless
 ExecStart=/usr/bin/deskflow-core server -s %h/.config/deskflow-headless/server.ini --new-instance
 # rereads the server config (layout, hotkeys) without dropping clients

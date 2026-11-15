@@ -8,8 +8,10 @@
 
 #include "deskflow/PlatformComputer.h"
 
-#include <bitset>
 #include <array>
+#include <bitset>
+#include <chrono>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -114,6 +116,19 @@ private:
   void stopRepeat();
   void onRepeatTimer();
   void setDeviceStatus(const std::string &path, const std::string &name, const char *kind, const char *state);
+  void handleKey(std::uint32_t keycode, bool pressed);
+  void handleButton(std::uint32_t code, bool pressed);
+  bool applyBinding(libinput_device *device, std::uint32_t code, bool pressed);
+  void pollControlFiles();
+  void loadBindings();
+
+  // one physical input on one device, remapped to other evdev key/button codes
+  struct Binding
+  {
+    std::string device; // exact device name, empty for any device
+    std::uint32_t code = 0;
+    std::vector<std::uint32_t> send;
+  };
 
   IEventQueue *m_events = nullptr;
   EiKeyState *m_keyState = nullptr;
@@ -122,6 +137,16 @@ private:
   std::vector<libinput_device *> m_keyboards;
   // every node libinput offered, for the web UI: path -> {name, kind, state}
   std::map<std::string, std::array<std::string, 3>> m_deviceStatus;
+
+  // bindings file (DESKFLOW_EVDEV_BINDINGS) and identify mode for the web UI;
+  // both are checked at most once a second, from the input path
+  std::vector<Binding> m_bindings;
+  std::string m_bindingsPath;
+  std::int64_t m_bindingsMtime = -1;
+  std::string m_identifyPath;
+  bool m_identify = false;
+  std::uint32_t m_inputSeq = 0;
+  std::chrono::steady_clock::time_point m_lastPoll{};
 
   std::vector<std::string> m_match;
   std::vector<std::string> m_ignore;

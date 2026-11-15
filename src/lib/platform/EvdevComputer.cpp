@@ -19,10 +19,14 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <libinput.h>
 #include <libudev.h>
+#include <QDateTime>
+#include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <linux/input.h>
 #include <sstream>
 #include <stdexcept>
@@ -53,6 +57,11 @@ std::vector<std::string> splitList(const char *value)
 bool containsAny(const std::string &name, const std::vector<std::string> &needles)
 {
   return std::any_of(needles.begin(), needles.end(), [&](const auto &n) { return name.find(n) != std::string::npos; });
+}
+
+std::int64_t mtimeNs(const struct stat &st)
+{
+  return static_cast<std::int64_t>(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec;
 }
 
 int openRestrictedTrampoline(const char *path, int flags, void *userData)
@@ -158,6 +167,13 @@ EvdevComputer::EvdevComputer(IEventQueue *events)
   }
   m_cursorX = m_w / 2;
   m_cursorY = m_h / 2;
+  if (const char *bindings = std::getenv("DESKFLOW_EVDEV_BINDINGS")) {
+    m_bindingsPath = bindings;
+  }
+  if (const char *statusDir = std::getenv("DESKFLOW_STATUS_DIR")) {
+    m_identifyPath = std::string(statusDir) + "/identify";
+  }
+  loadBindings();
 
   // EiKeyState only needs its computer to fake keys, which a primary never does
   m_keyState = new EiKeyState(nullptr, events);
@@ -593,6 +609,13 @@ void EvdevComputer::onKeyEvent(libinput_event *event)
   auto *kb = libinput_event_get_keyboard_event(event);
   std::uint32_t keycode = libinput_event_keyboard_get_key(kb);
   bool pressed = libinput_event_keyboard_get_key_state(kb) == LIBINPUT_KEY_STATE_PRESSED;
+  if (!applyBinding(libinput_event_get_device(event), keycode, pressed)) {
+    handleKey(keycode, pressed);
+  }
+}
+
+void EvdevComputer::handleKey(std::uint32_t keycode, bool pressed)
+{
   // X keycodes are evdev keycodes + 8
   std::uint32_t keyval = keycode + 8;
   KeyID keyid = m_keyState->mapKeyFromKeyval(keyval);
@@ -664,10 +687,18 @@ void EvdevComputer::stopRepeat()
 void EvdevComputer::onButtonEvent(libinput_event *event)
 {
   auto *p = libinput_event_get_pointer_event(event);
-  ButtonID id = mapButton(libinput_event_pointer_get_button(p));
+  std::uint32_t code = libinput_event_pointer_get_button(p);
   bool pressed = libinput_event_pointer_get_button_state(p) == LIBINPUT_BUTTON_STATE_PRESSED;
+  if (!applyBinding(libinput_event_get_device(event), code, pressed)) {
+    handleButton(code, pressed);
+  }
+}
+
+void EvdevComputer::handleButton(std::uint32_t code, bool pressed)
+{
+  ButtonID id = mapButton(code);
   if (id == kButtonNone) {
-    LOG_DEBUG("evdev: unmapped button 0x%x", libinput_event_pointer_get_button(p));
+    LOG_DEBUG("evdev: unmapped button 0x%x", code);
     return;
   }
   m_buttons.set(id, pressed);
@@ -675,6 +706,95 @@ void EvdevComputer::onButtonEvent(libinput_event *event)
       pressed ? EventTypes::PrimaryComputerButtonDown : EventTypes::PrimaryComputerButtonUp,
       ButtonInfo::alloc(id, m_keyState->pollActiveModifiers())
   );
+}
+
+void EvdevComputer::pollControlFiles()
+{
+  const auto now = std::chrono::steady_clock::now();
+  if (now - m_lastPoll < std::chrono::seconds(1)) {
+    return;
+  }
+  m_lastPoll = now;
+
+  struct stat st{};
+  if (!m_bindingsPath.empty()) {
+    const std::int64_t mtime = stat(m_bindingsPath.c_str(), &st) == 0 ? mtimeNs(st) : 0;
+    if (mtime != m_bindingsMtime) {
+      loadBindings();
+    }
+  }
+  // the web UI touches this file while it waits for a press to identify;
+  // only then is the last pressed input reported in the status file
+  m_identify = !m_identifyPath.empty() && stat(m_identifyPath.c_str(), &st) == 0 &&
+               std::abs(std::difftime(std::time(nullptr), st.st_mtime)) < 60;
+}
+
+void EvdevComputer::loadBindings()
+{
+  m_bindings.clear();
+  if (m_bindingsPath.empty()) {
+    return;
+  }
+  struct stat st{};
+  m_bindingsMtime = stat(m_bindingsPath.c_str(), &st) == 0 ? mtimeNs(st) : 0;
+  QFile file(QString::fromStdString(m_bindingsPath));
+  if (!file.open(QIODevice::ReadOnly)) {
+    return;
+  }
+  const auto doc = QJsonDocument::fromJson(file.readAll());
+  for (const auto &value : doc.object().value("bindings").toArray()) {
+    const auto obj = value.toObject();
+    Binding b;
+    b.device = obj.value("device").toString().toStdString();
+    b.code = static_cast<std::uint32_t>(obj.value("code").toInt());
+    for (const auto &code : obj.value("send").toArray()) {
+      if (code.toInt() > 0 && code.toInt() < KEY_MAX) {
+        b.send.push_back(static_cast<std::uint32_t>(code.toInt()));
+      }
+    }
+    if (b.code > 0) {
+      m_bindings.push_back(std::move(b));
+    }
+  }
+  LOG_INFO("evdev: %zu input binding(s) from %s", m_bindings.size(), m_bindingsPath.c_str());
+}
+
+bool EvdevComputer::applyBinding(libinput_device *device, std::uint32_t code, bool pressed)
+{
+  pollControlFiles();
+  const std::string name = device ? libinput_device_get_name(device) : "";
+  if (m_identify && pressed) {
+    headless::updateStatus(
+        {{"lastInput",
+          QJsonObject{
+              {"seq", static_cast<qint64>(++m_inputSeq)},
+              {"device", QString::fromStdString(name)},
+              {"code", static_cast<int>(code)},
+              {"at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+          }}}
+    );
+  }
+
+  const auto it = std::find_if(m_bindings.begin(), m_bindings.end(), [&](const Binding &b) {
+    return b.code == code && (b.device.empty() || b.device == name);
+  });
+  if (it == m_bindings.end()) {
+    return false;
+  }
+  // press in order and release in reverse, so modifiers wrap the key
+  auto emit = [this, pressed](std::uint32_t c) {
+    if (c >= BTN_MISC && c < KEY_OK) {
+      handleButton(c, pressed);
+    } else {
+      handleKey(c, pressed);
+    }
+  };
+  if (pressed) {
+    std::for_each(it->send.begin(), it->send.end(), emit);
+  } else {
+    std::for_each(it->send.rbegin(), it->send.rend(), emit);
+  }
+  return true;
 }
 
 void EvdevComputer::onMotionEvent(libinput_event *event)

@@ -177,6 +177,23 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
     </div>
   </section>
 
+  <section id="bindings-section">
+    <h2>Buttons and keys</h2>
+    <p class="hint">Make a button or key on a device plugged into this server send something else, such as a shortcut to whichever computer has the cursor, or one of the hotkeys above. A bound input stops doing its usual job.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Device</th><th>Input</th><th>Sends</th><th style="width:1%"></th></tr></thead>
+        <tbody id="bindings"></tbody>
+      </table>
+    </div>
+    <div id="binding-editor"></div>
+    <div class="actions">
+      <button id="add-binding">Add binding</button>
+      <button class="primary" id="save-bindings">Save bindings</button>
+      <span class="msg" id="bindings-msg" role="status"></span>
+    </div>
+  </section>
+
   <section id="computers-section">
     <h2>Computers</h2>
     <p class="hint">The names clients connect with. Aliases let a client whose own name differs (its hostname, say) still match. Saving restarts the server, and clients reconnect within a few seconds.</p>
@@ -228,7 +245,7 @@ let server = null;          // last /api/state
 let draft = null;           // layout + hotkeys being edited
 let computersDraft = null;
 let inputDraft = null;
-const dirty = { layout: false, computers: false, input: false };
+const dirty = { layout: false, computers: false, input: false, bindings: false };
 let selected = null;        // computer picked by click, waiting for a cell
 
 function el(tag, attrs = {}, ...children) {
@@ -558,6 +575,178 @@ async function saveInput() {
   }
 }
 
+// --- buttons and keys -----------------------------------------------------------------
+
+// Linux evdev codes, named like Deskflow's config (Control+Alt+F12)
+const KEY_CODES = (() => {
+  const map = {
+    Escape: 1, Minus: 12, Equal: 13, BackSpace: 14, Tab: 15, BracketLeft: 26, BracketRight: 27, Return: 28,
+    Control: 29, Semicolon: 39, Apostrophe: 40, Grave: 41, Shift: 42, Backslash: 43, Comma: 51, Period: 52,
+    Slash: 53, Alt: 56, Space: 57, CapsLock: 58, F11: 87, F12: 88, AltGr: 100, Home: 102, Up: 103, PageUp: 104,
+    Left: 105, Right: 106, End: 107, Down: 108, PageDown: 109, Insert: 110, Delete: 111, AudioMute: 113,
+    AudioLowerVolume: 114, AudioRaiseVolume: 115, Pause: 119, Super: 125, Menu: 127, AudioNext: 163,
+    AudioPlay: 164, AudioPrev: 165, Print: 99,
+    MouseLeft: 272, MouseRight: 273, MouseMiddle: 274, MouseBack: 275, MouseForward: 276,
+    MouseSide2: 277, MouseExtra2: 278, MouseTask: 279,
+  };
+  "qwertyuiop".split("").forEach((c, i) => { map[c.toUpperCase()] = 16 + i; });
+  "asdfghjkl".split("").forEach((c, i) => { map[c.toUpperCase()] = 30 + i; });
+  "zxcvbnm".split("").forEach((c, i) => { map[c.toUpperCase()] = 44 + i; });
+  for (let n = 1; n <= 9; n++) map[String(n)] = n + 1;
+  map["0"] = 11;
+  for (let n = 1; n <= 10; n++) map[`F${n}`] = 58 + n;
+  for (let n = 13; n <= 24; n++) map[`F${n}`] = 170 + n;
+  return map;
+})();
+const KEY_ALIASES = { ctrl: "Control", win: "Super", meta: "Super", cmd: "Super", enter: "Return", esc: "Escape", del: "Delete" };
+const KEY_BY_LOWER = Object.fromEntries(Object.keys(KEY_CODES).map((k) => [k.toLowerCase(), k]));
+const NAME_OF = Object.fromEntries(Object.entries(KEY_CODES).map(([k, v]) => [v, k]));
+
+function parseCombo(text) {
+  const parts = text.split("+").map((p) => p.trim()).filter(Boolean);
+  if (!parts.length) throw new Error("Type what to send, e.g. Control+Super+Right.");
+  return parts.map((p) => {
+    const name = KEY_ALIASES[p.toLowerCase()] || KEY_BY_LOWER[p.toLowerCase()];
+    if (!name) throw new Error(`Unknown key "${p}".`);
+    return KEY_CODES[name];
+  });
+}
+
+function inputName(code) {
+  return NAME_OF[code] || (code >= 0x100 ? `button 0x${code.toString(16)}` : `key ${code}`);
+}
+
+let bindingsDraft = [];
+let capture = null;        // {phase: "waiting"|"captured", baseline, device, code, text, onlyDevice}
+let captureTimer = null;
+let captureTouched = 0;
+
+function resetBindingsDraft() {
+  bindingsDraft = structuredClone(server.bindings || []);
+  dirty.bindings = false;
+  renderBindings();
+}
+
+function markBindingsDirty() {
+  dirty.bindings = true;
+  setMsg("bindings-msg", "Unsaved changes");
+}
+
+function renderBindings() {
+  const body = document.getElementById("bindings");
+  body.replaceChildren();
+  if (!bindingsDraft.length) {
+    body.append(el("tr", {}, el("td", { colspan: "4", class: "msg" }, "No bindings yet.")));
+  }
+  bindingsDraft.forEach((b, i) => {
+    body.append(el("tr", {},
+      el("td", {}, b.device || "any device"),
+      el("td", { class: "mono" }, inputName(b.code)),
+      el("td", { class: "mono" }, b.label || b.send.map(inputName).join("+")),
+      el("td", {}, el("button", { onclick: () => { bindingsDraft.splice(i, 1); markBindingsDirty(); renderBindings(); } }, "Remove")),
+    ));
+  });
+  renderBindingEditor();
+}
+
+async function stopCapture(keepEditor) {
+  clearInterval(captureTimer);
+  captureTimer = null;
+  if (!keepEditor) capture = null;
+  try { await api("/api/identify", { on: false }); } catch { /* best effort */ }
+  renderBindingEditor();
+}
+
+async function startCapture() {
+  try {
+    await api("/api/identify", { on: true });
+  } catch (e) {
+    return setMsg("bindings-msg", e.message, true);
+  }
+  captureTouched = Date.now();
+  const started = Date.now();
+  capture = { phase: "waiting", baseline: server.status?.lastInput?.at || null };
+  renderBindingEditor();
+  clearInterval(captureTimer);
+  captureTimer = setInterval(async () => {
+    if (Date.now() - started > 120000) return stopCapture(false);
+    if (Date.now() - captureTouched > 20000) {
+      captureTouched = Date.now();
+      api("/api/identify", { on: true }).catch(() => {});
+    }
+    try {
+      server = await api("/api/state");
+    } catch { return; }
+    const last = server.status?.lastInput;
+    if (capture?.phase === "waiting" && last?.at && last.at !== capture.baseline) {
+      capture = { phase: "captured", device: last.device, code: last.code, text: "", onlyDevice: true };
+      stopCapture(true);
+    }
+  }, 700);
+}
+
+function renderBindingEditor() {
+  const box = document.getElementById("binding-editor");
+  box.replaceChildren();
+  document.getElementById("add-binding").disabled = capture !== null;
+  if (!capture) return;
+  if (capture.phase === "waiting") {
+    box.append(el("div", { class: "actions" },
+      el("span", {}, "Press the button or key you want to bind."),
+      el("button", { onclick: () => stopCapture(false) }, "Cancel")),
+      el("p", { class: "hint" }, "Until you press something or cancel, the server reports the last key you pressed to this page."));
+    return;
+  }
+  const text = el("input", { id: "binding-send", class: "mono", value: capture.text, placeholder: "Control+Super+Right", spellcheck: "false",
+    oninput: (e) => { capture.text = e.target.value; } });
+  const pick = (label, combo) => el("button", { onclick: () => { capture.text = combo; text.value = combo; } }, label);
+  const hotkeyPicks = (draft?.hotkeys || []).filter((h) => h.keys && h.kind !== "custom").map((h) =>
+    pick(h.kind === "switch" ? `${h.keys} (switch to ${h.target})` : h.kind === "next" ? `${h.keys} (next computer)` : `${h.keys} (lock cursor)`, h.keys));
+  box.append(
+    el("p", {}, "Pressed ", el("strong", { class: "mono" }, inputName(capture.code)), ` on ${capture.device || "an unnamed device"}. `,
+      el("button", { onclick: startCapture }, "Press a different one")),
+    el("label", { for: "binding-send" }, "Send instead"),
+    text,
+    el("div", { class: "actions" },
+      pick("Next virtual desktop", "Control+Super+Right"),
+      pick("Previous virtual desktop", "Control+Super+Left"),
+      ...hotkeyPicks),
+    el("div", { class: "actions" },
+      el("label", { style: "display:flex;gap:6px;align-items:center;margin:0" },
+        el("input", { type: "checkbox", checked: capture.onlyDevice, onchange: (e) => { capture.onlyDevice = e.target.checked; } }),
+        "Only on this device"),
+      el("button", { class: "primary", onclick: addBinding }, "Add"),
+      el("button", { onclick: () => stopCapture(false) }, "Cancel")),
+  );
+}
+
+function addBinding() {
+  let send;
+  try {
+    send = parseCombo(capture.text);
+  } catch (e) {
+    return setMsg("bindings-msg", e.message, true);
+  }
+  const device = capture.onlyDevice ? capture.device : "";
+  bindingsDraft = bindingsDraft.filter((b) => !(b.device === device && b.code === capture.code));
+  bindingsDraft.push({ device, code: capture.code, send, label: send.map(inputName).join("+") });
+  capture = null;
+  markBindingsDirty();
+  renderBindings();
+}
+
+async function saveBindings() {
+  setMsg("bindings-msg", "Saving…");
+  try {
+    const res = await api("/api/bindings", { bindings: bindingsDraft });
+    await refresh();
+    resetBindingsDraft();
+    setMsg("bindings-msg", `Saved: ${res.note}`);
+  } catch (e) {
+    setMsg("bindings-msg", e.message, true);
+  }
+}
+
 // --- polling ------------------------------------------------------------------------
 
 async function refresh() {
@@ -572,6 +761,7 @@ async function tick() {
     // never rebuild a section while someone is in one of its fields
     const editing = (id) => document.getElementById(id).contains(document.activeElement);
     if (first || (!dirty.layout && !selected && !editing("layout"))) resetLayoutDraft(); else renderLayout();
+    if (first || (!dirty.bindings && !capture && !editing("bindings-section"))) resetBindingsDraft();
     if (first || (!dirty.computers && !editing("computers-section"))) resetComputersDraft();
     if (first || (!dirty.input && !editing("input-fields"))) resetInputDraft();
     renderDevices();
@@ -594,7 +784,8 @@ document.getElementById("add-computer").addEventListener("click", () => {
   renderComputers();
 });
 document.getElementById("save-computers").addEventListener("click", saveComputers);
-document.getElementById("save-input").addEventListener("click", saveInput);
+document.getElementById("add-binding").addEventListener("click", startCapture);
+document.getElementById("save-bindings").addEventListener("click", saveBindings);document.getElementById("save-input").addEventListener("click", saveInput);
 document.addEventListener("click", (e) => {
   if (selected && !e.target.closest(".cell, #tray")) { selected = null; renderLayout(); }
 });
