@@ -187,6 +187,15 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
       </table>
     </div>
     <div id="binding-editor"></div>
+
+    <h3>Logitech buttons</h3>
+    <p class="hint">Extra buttons on Logitech devices, such as the MX Master's thumb button, only work when told to act as a normal button. The device forgets this when it is switched off; the server tells it again when it notices the device is back.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Device</th><th>Battery</th><th>Button</th><th>Acts as</th></tr></thead>
+        <tbody id="hidpp"></tbody>
+      </table>
+    </div>
     <div class="actions">
       <button id="add-binding">Add binding</button>
       <button class="primary" id="save-bindings">Save bindings</button>
@@ -304,6 +313,9 @@ function renderSummary() {
     if (status?.active && status.active !== primary) parts.push(`cursor on ${status.active}`);
     else if (clients.length === 0) parts.push("waiting for a client");
     if (!status) parts.push("no status file (is DESKFLOW_STATUS_DIR set?)");
+    for (const d of status?.hidpp || []) {
+      if (d.battery) parts.push(`${d.device} ${d.battery.percent} %`);
+    }
   }
   document.getElementById("summary").textContent = parts.join(" · ");
 }
@@ -621,14 +633,57 @@ function inputName(code) {
 }
 
 let bindingsDraft = [];
+let remapsDraft = [];
+
+const CONTROL_NAMES = {
+  0x50: "Left click", 0x51: "Right click", 0x52: "Middle click", 0x53: "Back", 0x56: "Forward",
+  0xc3: "Thumb button", 0xc4: "Wheel-mode button", 0xd7: "Gesture",
+};
+const controlName = (cid) => CONTROL_NAMES[cid] || `control 0x${cid.toString(16)}`;
+
+function renderHidpp() {
+  const body = document.getElementById("hidpp");
+  body.replaceChildren();
+  const devices = server.status?.hidpp || [];
+  if (!devices.length) {
+    body.append(el("tr", {}, el("td", { colspan: "4", class: "msg" }, "No Logitech HID++ devices found (or the server can't open the receiver).")));
+    return;
+  }
+  for (const d of devices) {
+    const battery = d.battery ? `${d.battery.percent} %, ${d.battery.state}` : "unknown";
+    const extras = (d.controls || []).filter((c) => c.targets?.length && ![0x50, 0x51].includes(c.cid));
+    if (!extras.length) {
+      body.append(el("tr", {}, el("td", {}, d.device), el("td", {}, battery), el("td", { colspan: "2", class: "msg" }, "no remappable buttons")));
+      continue;
+    }
+    extras.forEach((c, i) => {
+      const current = remapsDraft.find((r) => r.control === c.cid && (r.device === d.device || !r.device));
+      const select = el("select", { "aria-label": `${controlName(c.cid)} acts as`, onchange: (e) => {
+        remapsDraft = remapsDraft.filter((r) => !(r.control === c.cid && (r.device === d.device || !r.device)));
+        const to = Number(e.target.value);
+        if (to !== c.cid) remapsDraft.push({ device: d.device, control: c.cid, to });
+        markBindingsDirty();
+      } },
+        el("option", { value: String(c.cid), selected: !current }, "Its own job"),
+        c.targets.map((t) => el("option", { value: String(t), selected: current?.to === t }, controlName(t))));
+      body.append(el("tr", {},
+        el("td", {}, i === 0 ? d.device : ""),
+        el("td", {}, i === 0 ? battery : ""),
+        el("td", {}, controlName(c.cid)),
+        el("td", {}, select)));
+    });
+  }
+}
 let capture = null;        // {phase: "waiting"|"captured", baseline, device, code, text, onlyDevice}
 let captureTimer = null;
 let captureTouched = 0;
 
 function resetBindingsDraft() {
   bindingsDraft = structuredClone(server.bindings || []);
+  remapsDraft = structuredClone(server.remaps || []);
   dirty.bindings = false;
   renderBindings();
+  renderHidpp();
 }
 
 function markBindingsDirty() {
@@ -751,7 +806,7 @@ async function saveBindings() {
   if (capture?.phase === "captured" && !takeCapture()) return;
   setMsg("bindings-msg", "Saving…");
   try {
-    const res = await api("/api/bindings", { bindings: bindingsDraft });
+    const res = await api("/api/bindings", { bindings: bindingsDraft, remaps: remapsDraft });
     await refresh();
     resetBindingsDraft();
     setMsg("bindings-msg", `Saved: ${res.note}`);

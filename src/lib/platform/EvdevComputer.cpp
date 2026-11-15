@@ -13,6 +13,7 @@
 #include "platform/EiKeyState.h"
 #include "platform/EvdevEventQueueBuffer.h"
 #include "platform/HidppListener.h"
+#include "platform/HidppManager.h"
 
 #include <algorithm>
 #include <bit>
@@ -209,6 +210,10 @@ EvdevComputer::EvdevComputer(IEventQueue *events)
       loadBindings();
     }
   }
+  if (qEnvironmentVariable("DESKFLOW_EVDEV_HIDPP_MANAGER") != QStringLiteral("0")) {
+    m_hidppManager = std::make_unique<HidppManager>();
+    loadBindings();
+  }
   m_events->adoptBuffer(new EvdevEventQueueBuffer(libinput_get_fd(m_libinput), m_events, m_hidppWake));
 
   LOG_INFO("evdev: headless primary, virtual screen %dx%d", m_w, m_h);
@@ -249,6 +254,7 @@ void EvdevComputer::setDeviceStatus(const std::string &path, const std::string &
 EvdevComputer::~EvdevComputer()
 {
   stopRepeat();
+  m_hidppManager.reset();
   m_hidpp.reset();
   m_events->adoptBuffer(nullptr);
   if (m_hidppWake >= 0) {
@@ -595,6 +601,9 @@ void EvdevComputer::handleSystemEvent(const Event &)
 
 void EvdevComputer::onDeviceAdded(libinput_device *device)
 {
+  if (m_hidppManager && libinput_device_get_id_vendor(device) == 0x046d) {
+    m_hidppManager->rescan();
+  }
   if (libinput_device_config_accel_is_available(device)) {
     libinput_device_config_accel_set_speed(device, m_accelSpeed);
   }
@@ -636,6 +645,7 @@ bool EvdevComputer::onHotkey(KeyID key, bool isPressed, KeyModifierMask mask)
 
 void EvdevComputer::onKeyEvent(libinput_event *event)
 {
+  noteLogitechInput(libinput_event_get_device(event));
   auto *kb = libinput_event_get_keyboard_event(event);
   std::uint32_t keycode = libinput_event_keyboard_get_key(kb);
   bool pressed = libinput_event_keyboard_get_key_state(kb) == LIBINPUT_KEY_STATE_PRESSED;
@@ -716,6 +726,7 @@ void EvdevComputer::stopRepeat()
 
 void EvdevComputer::onButtonEvent(libinput_event *event)
 {
+  noteLogitechInput(libinput_event_get_device(event));
   auto *p = libinput_event_get_pointer_event(event);
   std::uint32_t code = libinput_event_pointer_get_button(p);
   bool pressed = libinput_event_pointer_get_button_state(p) == LIBINPUT_BUTTON_STATE_PRESSED;
@@ -736,6 +747,20 @@ void EvdevComputer::handleButton(std::uint32_t code, bool pressed)
       pressed ? EventTypes::PrimaryComputerButtonDown : EventTypes::PrimaryComputerButtonUp,
       ButtonInfo::alloc(id, m_keyState->pollActiveModifiers())
   );
+}
+
+void EvdevComputer::noteLogitechInput(libinput_device *device)
+{
+  if (!m_hidppManager || device == nullptr || libinput_device_get_id_vendor(device) != 0x046d) {
+    return;
+  }
+  // input after a quiet spell: the device may have been off, and forgotten its remaps
+  const auto now = std::chrono::steady_clock::now();
+  if (now - m_lastLogitechInput > std::chrono::seconds(2)) {
+    m_hidppManager->wake();
+  }
+  m_lastLogitechInput = now;
+  m_hidppManager->noteInput();
 }
 
 void EvdevComputer::pollControlFiles()
@@ -785,6 +810,21 @@ void EvdevComputer::loadBindings()
     if (b.code > 0) {
       m_bindings.push_back(std::move(b));
     }
+  }
+  if (m_hidppManager) {
+    std::vector<HidppManager::Remap> remaps;
+    for (const auto &value : doc.object().value("remaps").toArray()) {
+      const auto obj = value.toObject();
+      const int control = obj.value("control").toInt();
+      const int to = obj.value("to").toInt();
+      if (control > 0 && control < 0x10000 && to > 0 && to < 0x10000) {
+        remaps.push_back(
+            {obj.value("device").toString().toStdString(), static_cast<std::uint16_t>(control),
+             static_cast<std::uint16_t>(to)}
+        );
+      }
+    }
+    m_hidppManager->setRemaps(std::move(remaps));
   }
   LOG_INFO("evdev: %zu input binding(s) from %s", m_bindings.size(), m_bindingsPath.c_str());
   if (m_hidpp) {
@@ -837,6 +877,7 @@ bool EvdevComputer::applyBinding(const std::string &name, std::uint32_t code, bo
 
 void EvdevComputer::onMotionEvent(libinput_event *event)
 {
+  noteLogitechInput(libinput_event_get_device(event));
   auto *p = libinput_event_get_pointer_event(event);
   double dx = libinput_event_pointer_get_dx(p);
   double dy = libinput_event_pointer_get_dy(p);
@@ -866,6 +907,7 @@ void EvdevComputer::onMotionEvent(libinput_event *event)
 
 void EvdevComputer::onWheelEvent(libinput_event *event)
 {
+  noteLogitechInput(libinput_event_get_device(event));
   // libinput and deskflow both use 120 per wheel click, with opposite signs
   auto *p = libinput_event_get_pointer_event(event);
   double v = 0;
@@ -883,6 +925,7 @@ void EvdevComputer::onWheelEvent(libinput_event *event)
 
 void EvdevComputer::onFingerScrollEvent(libinput_event *event)
 {
+  noteLogitechInput(libinput_event_get_device(event));
   // touchpad scroll is in pixel-like units; 10 units == one wheel click, as in EiComputer
   static const double s_clicksPerUnit = 0.1;
   auto *p = libinput_event_get_pointer_event(event);

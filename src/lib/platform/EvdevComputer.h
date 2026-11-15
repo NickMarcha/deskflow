@@ -122,6 +122,7 @@ private:
   bool applyBinding(const std::string &device, std::uint32_t code, bool pressed);
   void pollControlFiles();
   void loadBindings();
+  void noteLogitechInput(libinput_device *device);
 
   // one physical input on one device, remapped to other evdev key/button codes
   struct Binding
@@ -152,6 +153,9 @@ private:
   // extra Logitech controls over HID++ (thumb button etc.), see HidppListener
   std::unique_ptr<class HidppListener> m_hidpp;
   int m_hidppWake = -1;
+  // short HID++ sessions: button remaps and battery, see HidppManager
+  std::unique_ptr<class HidppManager> m_hidppManager;
+  std::chrono::steady_clock::time_point m_lastLogitechInput{};
 
   std::vector<std::string> m_match;
   std::vector<std::string> m_ignore;

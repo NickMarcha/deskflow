@@ -68,6 +68,21 @@ In the server config, don't link anything into the Pi's own screen if you never 
 
 Every save keeps the previous file in `~/.config/deskflow-headless/backups/` (the last 20 of each).
 
+## Logitech devices (HID++)
+
+The server talks to Logitech receivers and devices over HID++ 2.0 for two things, in short sessions that open the receiver's hidraw node for a few milliseconds and close it again:
+
+- **Remaps.** Extra controls like the MX Master's thumb button send nothing a normal driver can see. A remap tells the device's own firmware to make the control act as another one (for example thumb button as forward), so it arrives as a normal button and bindings can use it. Devices forget this when switched off, so the server checks again whenever a Logitech device's input resumes after two seconds of quiet, retries while the device reconnects, and checks once a minute while it's idle. Set in the web UI under Buttons and keys, stored as `remaps` in `bindings.json`.
+- **Battery.** Read on those checks and every 15 minutes while idle; shown in the web UI.
+
+Both need read/write access to the receiver's hidraw node, for example with this udev rule:
+
+```
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0660", GROUP="input"
+```
+
+`DESKFLOW_EVDEV_HIDPP_MANAGER=0` turns this off. `DESKFLOW_EVDEV_HIDPP=1` instead keeps the node open and reads diverted controls directly, with no remap needed, but on a Raspberry Pi 4 with a Logi Bolt receiver an open node stops the mouse from moving, so it is off by default.
+
 ## Staying in sync with upstream
 
 - `master` is a plain mirror of upstream. Nothing is committed to it.

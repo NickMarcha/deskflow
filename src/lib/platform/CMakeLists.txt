@@ -167,6 +167,8 @@ elseif(UNIX)
         EvdevEventQueueBuffer.h
         HidppListener.cpp
         HidppListener.h
+        HidppManager.cpp
+        HidppManager.h
       )
     endif()
     # The Portal sources also require EI.

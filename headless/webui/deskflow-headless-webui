@@ -328,6 +328,7 @@ class App:
             "options": options,
             "env": self.env(),
             "bindings": self.bindings(),
+            "remaps": self.remaps(),
             "status": self.status(),
             "service": self.service(),
             "files": {"settings": str(self.settings), "config": str(self.conf_path(sections)), "env": str(self.env_file)},
@@ -500,12 +501,18 @@ class App:
             self.restart()
             raise ApiError("The server didn't start with the new computers, so the old ones are back.")
 
-    def bindings(self) -> list[dict]:
+    def bindings_data(self) -> dict:
         try:
             data = json.loads(read_text(self.bindings_file) or "{}")
         except json.JSONDecodeError:
-            return []
-        return data.get("bindings", []) if isinstance(data, dict) else []
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def bindings(self) -> list[dict]:
+        return self.bindings_data().get("bindings", [])
+
+    def remaps(self) -> list[dict]:
+        return self.bindings_data().get("remaps", [])
 
     def save_bindings(self, body: dict) -> dict:
         wanted = body.get("bindings")
@@ -529,9 +536,21 @@ class App:
                 raise ApiError("the same input is bound twice")
             seen.add((device, code))
             out.append({"device": device, "code": code, "send": send, "label": str(b.get("label", ""))[:80]})
+        # Logitech controls told to act as another control (HID++ remap)
+        remaps = body.get("remaps", self.remaps())
+        if not isinstance(remaps, list) or len(remaps) > 50:
+            raise ApiError("remaps must be a list (at most 50)")
+        remap_out = []
+        for r in remaps:
+            if not isinstance(r, dict):
+                raise ApiError("each remap must be an object")
+            control, to = r.get("control"), r.get("to")
+            if not all(isinstance(v, int) and 0 < v < 0x10000 for v in (control, to)):
+                raise ApiError("bad remap control")
+            remap_out.append({"device": str(r.get("device", ""))[:128], "control": control, "to": to})
         with self.lock:
             self.backup(self.bindings_file)
-            atomic_write(self.bindings_file, json.dumps({"bindings": out}, indent=2) + "\n")
+            atomic_write(self.bindings_file, json.dumps({"bindings": out, "remaps": remap_out}, indent=2) + "\n")
         return {"ok": True, "note": "saved; the server picks it up on the next key or button press"}
 
     def identify(self, body: dict) -> dict:
