@@ -5,7 +5,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Deskflow headless</title>
+<title>Deskflow Headless</title>
+<link rel="icon" href="data:image/svg+xml,<svg viewBox=%220 0 64 64%22 xmlns=%22http://www.w3.org/2000/svg%22><g> <path transform=%22matrix%28.0035792 0 0 .00332131 3.3640502 8.5103867%29%22 d=%22m10822.775 14277.69c-1195.5832-143.508-2220.2063-841.148-3268.3667-1379.127-718.8533-355.301-1431.1297-838.976-2251.4363-896.085-491.0057-34.634-993.9142 16.701-1419.8658 282.946-632.9097 323.689-1041.4867 924.538-1556.5718 1387.702-543.283 324.938-1024.416-324.503-999.9439-831.854-66.7515-706.46 526.7775-1215.106 971.4799-1675.328 796.7042-788.985 1908.9735-1339.2985 3051.7899-1198.3588 1348.2477 151.6528 2490.0786 954.1998 3671.9639 1551.7868 812.8473 430.368 1732.2728 937.309 2680.6698 656.999 865.182-240.211 1345.317-1049.536 1918.072-1669.709 419.319-369.53 999.56 99.027 1037.303 575.62 144.849 591.439-228.81 1099.793-584.858 1527.872-674.991 878.758-1646.404 1612.499-2788.132 1678.492-153.996 19.794-308.698 6.257-462.104-10.956z%22 fill=%22%2336c%22/> <path transform=%22matrix%28.0035792 0 0 .00332131 3.3640502 8.5103867%29%22 d=%22m10691.975 9232.2954c-1346.7866-233.442-2482.2127-1056.6227-3678.5758-1664.7424-695.4986-378.4799-1470.5745-714.0712-2280.7464-598.1882-941.5676 103.7825-1636.2665 838.7246-2221.3709 1517.6968-357.7822 475.5363-1019.0962 175.8535-1141.2824-335.3297-208.9829-548.6041 47.2435-1132.7956 434.1797-1530.8079 842.7581-995.9376 2062.8343-1830.0934 3422.8453-1718.801 1538.2424 122.1926 2802.7979 1096.8978 4150.0464 1747.2218 689.4831 373.3537 1480.8271 695.5213 2275.6811 498.2159 843.443-225.4675 1355.155-986.6873 1874.463-1625.928 303.839-429.2412 935.004-202.6984 1073.134 247.0946 229.503 525.6439 50.159 1127.049-311.918 1545.1618-731.881 1031.1947-1847.889 1971.3437-3180.435 1938.7364-138.853 1.6775-278.273-1.5834-416.021-20.3301z%22 fill=%22%2333b2cc%22/> <path transform=%22matrix%28.0035792 0 0 .00332131 3.3640502 8.5103867%29%22 d=%22m10576.744 4172.4544c-1701.8803-307.3997-3032.1599-1536.7149-4636.2805-2103.0311-760.2252-231.6118-1634.8256-183.7851-2292.0294 297.8872-522.046 315.7633-870.3773 828.5536-1307.695 1235.7633-408.0241 287.6051-882.8065-100.3925-976.5864-516.0856-207.011-566.4578 84.2445-1166.9024 491.559-1564.2835 824.1797-978.84256 2034.8379-1776.0729 3363.7164-1666.2309 1553.6459 128.55364 2838.511 1104.9364 4193.6746 1778.0128 748.5153 409.2855 1666.3233 736.8711 2500.3373 374.9559 742.862-301.9425 1184.93-1003.6082 1669.344-1599.364 390.513-404.44774 1011.637 22.50986 1078.781 494.20116 143.129 510.48212-76.578 1022.7906-407.346 1408.7503-715.856 1002.3301-1795.1 1907.7734-3088.381 1906.4911-197.264 2.2737-394.6-14.3348-589.094-47.0667z%22 fill=%22%233c9%22/> </g></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -15,8 +16,10 @@
   --border: #dcdcd7;
   --text: #1c1c1a;
   --muted: #62625d;
-  --accent: #0f766e;
+  --accent: #1d7f94;
   --accent-text: #ffffff;
+  --ok: #1f8a63;
+  --link: #2f5fbf;
   --danger: #b4232c;
   --cell: #efefeb;
   color-scheme: light;
@@ -28,8 +31,10 @@
     --border: #2e2e2e;
     --text: #f0f0f0;
     --muted: #a0a0a0;
-    --accent: #00d4aa;
-    --accent-text: #08110f;
+    --accent: #33b2cc;
+    --accent-text: #071316;
+    --ok: #33cc99;
+    --link: #508ed8;
     --danger: #ff6b6b;
     --cell: #151515;
     color-scheme: dark;
@@ -37,7 +42,8 @@
 }
 :root[data-theme="dark"] {
   --bg: #0f0f0f; --surface: #1a1a1a; --border: #2e2e2e; --text: #f0f0f0; --muted: #a0a0a0;
-  --accent: #00d4aa; --accent-text: #08110f; --danger: #ff6b6b; --cell: #151515; color-scheme: dark;
+  --accent: #33b2cc; --accent-text: #071316; --ok: #33cc99; --link: #508ed8; --danger: #ff6b6b; --cell: #151515;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body {
@@ -52,9 +58,19 @@ header {
   background: var(--surface);
 }
 .wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
-header .wrap { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding-top: 14px; padding-bottom: 14px; }
-h1 { font-size: 18px; font-weight: 600; margin: 0; }
-#summary { color: var(--muted); }
+header .wrap { display: flex; align-items: center; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
+header .logo { width: 36px; height: 36px; flex: none; }
+header .titles { min-width: 0; }
+h1 { font-size: 18px; font-weight: 600; margin: 0; line-height: 1.3; }
+.fork-note { margin: 0; font-size: 13px; color: var(--muted); }
+a { color: var(--link); }
+#summary { border-bottom: 1px solid var(--border); background: var(--bg); }
+#summary .wrap { display: flex; flex-wrap: wrap; gap: 4px 18px; padding-top: 8px; padding-bottom: 8px; color: var(--muted); font-size: 14px; }
+#summary strong { color: var(--text); font-weight: 500; }
+.low { color: var(--danger); font-weight: 500; }
+.notify-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px; }
+.notify-row label { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 14px; color: var(--text); }
+.notify-row input[type=number] { width: 4.5em; }
 main section { padding: 24px 0; border-bottom: 1px solid var(--border); }
 main section:last-child { border-bottom: 0; }
 h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
@@ -133,7 +149,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
 .msg { white-space: pre-wrap; color: var(--muted); }
 .msg.error { color: var(--danger); }
-.state-used { color: var(--accent); }
+.state-used { color: var(--ok); }
 .state-error { color: var(--danger); }
 details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
 @media (max-width: 600px) {
@@ -145,10 +161,15 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
 <body>
 <header>
   <div class="wrap">
-    <h1 id="title">Deskflow headless</h1>
-    <span id="summary">Loading…</span>
+    <!-- Deskflow logo, (C) Deskflow Developers, GPL-2.0-only (src/apps/res/icons) -->
+    <svg class="logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g> <path transform="matrix(.0035792 0 0 .00332131 3.3640502 8.5103867)" d="m10822.775 14277.69c-1195.5832-143.508-2220.2063-841.148-3268.3667-1379.127-718.8533-355.301-1431.1297-838.976-2251.4363-896.085-491.0057-34.634-993.9142 16.701-1419.8658 282.946-632.9097 323.689-1041.4867 924.538-1556.5718 1387.702-543.283 324.938-1024.416-324.503-999.9439-831.854-66.7515-706.46 526.7775-1215.106 971.4799-1675.328 796.7042-788.985 1908.9735-1339.2985 3051.7899-1198.3588 1348.2477 151.6528 2490.0786 954.1998 3671.9639 1551.7868 812.8473 430.368 1732.2728 937.309 2680.6698 656.999 865.182-240.211 1345.317-1049.536 1918.072-1669.709 419.319-369.53 999.56 99.027 1037.303 575.62 144.849 591.439-228.81 1099.793-584.858 1527.872-674.991 878.758-1646.404 1612.499-2788.132 1678.492-153.996 19.794-308.698 6.257-462.104-10.956z" fill="#36c"/> <path transform="matrix(.0035792 0 0 .00332131 3.3640502 8.5103867)" d="m10691.975 9232.2954c-1346.7866-233.442-2482.2127-1056.6227-3678.5758-1664.7424-695.4986-378.4799-1470.5745-714.0712-2280.7464-598.1882-941.5676 103.7825-1636.2665 838.7246-2221.3709 1517.6968-357.7822 475.5363-1019.0962 175.8535-1141.2824-335.3297-208.9829-548.6041 47.2435-1132.7956 434.1797-1530.8079 842.7581-995.9376 2062.8343-1830.0934 3422.8453-1718.801 1538.2424 122.1926 2802.7979 1096.8978 4150.0464 1747.2218 689.4831 373.3537 1480.8271 695.5213 2275.6811 498.2159 843.443-225.4675 1355.155-986.6873 1874.463-1625.928 303.839-429.2412 935.004-202.6984 1073.134 247.0946 229.503 525.6439 50.159 1127.049-311.918 1545.1618-731.881 1031.1947-1847.889 1971.3437-3180.435 1938.7364-138.853 1.6775-278.273-1.5834-416.021-20.3301z" fill="#33b2cc"/> <path transform="matrix(.0035792 0 0 .00332131 3.3640502 8.5103867)" d="m10576.744 4172.4544c-1701.8803-307.3997-3032.1599-1536.7149-4636.2805-2103.0311-760.2252-231.6118-1634.8256-183.7851-2292.0294 297.8872-522.046 315.7633-870.3773 828.5536-1307.695 1235.7633-408.0241 287.6051-882.8065-100.3925-976.5864-516.0856-207.011-566.4578 84.2445-1166.9024 491.559-1564.2835 824.1797-978.84256 2034.8379-1776.0729 3363.7164-1666.2309 1553.6459 128.55364 2838.511 1104.9364 4193.6746 1778.0128 748.5153 409.2855 1666.3233 736.8711 2500.3373 374.9559 742.862-301.9425 1184.93-1003.6082 1669.344-1599.364 390.513-404.44774 1011.637 22.50986 1078.781 494.20116 143.129 510.48212-76.578 1022.7906-407.346 1408.7503-715.856 1002.3301-1795.1 1907.7734-3088.381 1906.4911-197.264 2.2737-394.6-14.3348-589.094-47.0667z" fill="#3c9"/> </g></svg>
+    <div class="titles">
+      <h1>Deskflow Headless</h1>
+      <p class="fork-note">An unofficial fork of <a href="https://github.com/deskflow/deskflow">Deskflow</a>, not affiliated with or endorsed by the Deskflow project. <a href="https://github.com/NickMarcha/deskflow">Fork on GitHub</a></p>
+    </div>
   </div>
 </header>
+<div id="summary"><div class="wrap" id="summary-items">Loading…</div></div>
 <main class="wrap">
   <section id="layout">
     <h2>Layout</h2>
@@ -196,6 +217,7 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
         <tbody id="hidpp"></tbody>
       </table>
     </div>
+    <div class="notify-row" id="notify-controls"></div>
     <div class="actions">
       <button id="add-binding">Add binding</button>
       <button class="primary" id="save-bindings">Save bindings</button>
@@ -301,23 +323,97 @@ function isRunning() {
 function renderSummary() {
   const status = server.status;
   const primary = server.primary || "server";
-  document.getElementById("title").textContent = `Deskflow on ${primary}`;
-  document.title = `Deskflow on ${primary}`;
-  const parts = [];
+  document.title = `Deskflow Headless · ${primary}`;
+  const items = [];
+  const add = (label, value, cls) => items.push(el("span", { class: cls || "" }, label ? `${label} ` : "", el("strong", { class: cls || "" }, value)));
   if (!isRunning()) {
-    parts.push(`Server is ${server.service?.ActiveState || "not running"}`);
+    add(`Server ${primary}`, server.service?.ActiveState || "not running", "low");
   } else {
     const clients = status?.clients || [];
     const total = server.computers.filter((c) => c.name !== primary).length;
-    parts.push(`${clients.length} of ${total} computers connected`);
-    if (status?.active && status.active !== primary) parts.push(`cursor on ${status.active}`);
-    else if (clients.length === 0) parts.push("waiting for a client");
-    if (!status) parts.push("no status file (is DESKFLOW_STATUS_DIR set?)");
+    add(`Server ${primary}`, "running");
+    add("Connected", `${clients.length} of ${total}`);
+    if (status?.active && status.active !== primary) add("Cursor on", status.active);
+    else if (clients.length === 0) add("", "waiting for a client");
+    if (!status) add("", "no status file (is DESKFLOW_STATUS_DIR set?)", "low");
     for (const d of status?.hidpp || []) {
-      if (d.battery) parts.push(`${d.device} ${d.battery.percent} %`);
+      if (d.battery) add(d.device, `${d.battery.percent} %${d.battery.state === "discharging" ? "" : `, ${d.battery.state}`}`, isLow(d.battery) ? "low" : "");
     }
   }
-  document.getElementById("summary").textContent = parts.join(" · ");
+  document.getElementById("summary-items").replaceChildren(...items);
+}
+
+// --- battery notifications (this browser only) ---------------------------------------
+
+const NOTIFY_KEY = "dfh.notify";
+const THRESHOLD_KEY = "dfh.batteryThreshold";
+const NOTIFIED_KEY = "dfh.batteryNotified";
+const FAVICON = document.querySelector('link[rel="icon"]').href;
+
+function load(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : JSON.parse(v);
+  } catch { return fallback; }
+}
+function store(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ }
+}
+const threshold = () => Math.min(50, Math.max(5, Number(load(THRESHOLD_KEY, 15)) || 15));
+const isLow = (b) => b && b.state === "discharging" && b.percent <= threshold();
+
+function notificationsUsable() {
+  return typeof Notification !== "undefined" && window.isSecureContext;
+}
+
+function checkBatteries() {
+  if (!load(NOTIFY_KEY, false) || !notificationsUsable() || Notification.permission !== "granted") return;
+  const notified = load(NOTIFIED_KEY, {});
+  for (const d of server.status?.hidpp || []) {
+    const b = d.battery;
+    if (!b) continue;
+    const was = notified[d.device] || "none";
+    let now = was;
+    if (b.state !== "discharging" || b.percent > threshold() + 5) now = "none";
+    else if (b.percent <= 5) now = "critical";
+    else if (b.percent <= threshold() && was === "none") now = "low";
+    if (now !== was && now !== "none") {
+      new Notification(`${d.device}: battery at ${b.percent} %`, {
+        body: now === "critical" ? "Almost empty. Charge it now." : "Charge it soon.",
+        icon: FAVICON,
+        tag: `battery-${d.device}`,
+      });
+    }
+    notified[d.device] = now;
+  }
+  store(NOTIFIED_KEY, notified);
+}
+
+function renderNotifyControls() {
+  const box = document.getElementById("notify-controls");
+  const msg = (text) => el("span", { class: "msg" }, text);
+  box.replaceChildren();
+  const toggle = el("input", { type: "checkbox", checked: load(NOTIFY_KEY, false), onchange: async (e) => {
+    if (e.target.checked && notificationsUsable() && Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+    store(NOTIFY_KEY, e.target.checked);
+    renderNotifyControls();
+    checkBatteries();
+  } });
+  const level = el("input", { type: "number", min: "5", max: "50", value: String(threshold()), "aria-label": "Warn at percent",
+    onchange: (e) => { store(THRESHOLD_KEY, Number(e.target.value)); renderSummary(); renderHidpp(); } });
+  box.append(
+    el("label", {}, toggle, "Desktop notification when a battery runs low"),
+    el("label", {}, "at", level, "%"),
+  );
+  if (!notificationsUsable()) {
+    box.append(msg("This browser can't show notifications here (it needs HTTPS)."));
+  } else if (Notification.permission === "denied") {
+    box.append(msg("Notifications are blocked for this site in the browser settings."));
+  } else if (load(NOTIFY_KEY, false) && Notification.permission === "granted") {
+    box.append(el("button", { onclick: () => new Notification("Deskflow Headless", { body: "Battery warnings will look like this.", icon: FAVICON }) }, "Send a test notification"));
+  }
 }
 
 // --- layout -------------------------------------------------------------------
@@ -650,7 +746,7 @@ function renderHidpp() {
     return;
   }
   for (const d of devices) {
-    const battery = d.battery ? `${d.battery.percent} %, ${d.battery.state}` : "unknown";
+    const battery = d.battery ? el("span", { class: isLow(d.battery) ? "low" : "" }, `${d.battery.percent} %, ${d.battery.state}`) : "unknown";
     const extras = (d.controls || []).filter((c) => c.targets?.length && ![0x50, 0x51].includes(c.cid));
     if (!extras.length) {
       body.append(el("tr", {}, el("td", {}, d.device), el("td", {}, battery), el("td", { colspan: "2", class: "msg" }, "no remappable buttons")));
@@ -833,8 +929,9 @@ async function tick() {
     if (first || (!dirty.computers && !editing("computers-section"))) resetComputersDraft();
     if (first || (!dirty.input && !editing("input-fields"))) resetInputDraft();
     renderDevices();
+    checkBatteries();
   } catch (e) {
-    document.getElementById("summary").textContent = `Can't reach the web UI service: ${e.message}`;
+    document.getElementById("summary-items").textContent = `Can't reach the web UI service: ${e.message}`;
   }
 }
 
@@ -858,6 +955,7 @@ document.addEventListener("click", (e) => {
   if (selected && !e.target.closest(".cell, #tray")) { selected = null; renderLayout(); }
 });
 
+renderNotifyControls();
 tick();
 setInterval(tick, 2000);
 </script>
