@@ -71,11 +71,14 @@ private:
     int fd = -1;
     std::map<std::uint8_t, Device> devices; // by device index 1..6
     std::set<std::uint8_t> reprobe;
+    std::set<std::uint8_t> unanswered; // slots that didn't answer (device asleep or off)
   };
 
   void run();
   void scan();
-  void probe(Node &node, std::uint8_t index);
+  //! false if the slot didn't answer, so it is probed again later
+  bool probe(Node &node, std::uint8_t index);
+  void enableNotifications(Node &node);
   void applyDiversion(Node &node);
   bool wanted(const Device &dev, std::uint16_t cid) const;
   bool request(
@@ -93,6 +96,7 @@ private:
 
   std::map<std::string, Node> m_nodes; // by /dev/hidrawN, thread only
   bool m_identify = false;             // thread only
+  std::uint8_t m_lastError = 0;        // HID++ error of the last failed request, 0 = no answer
 
   mutable std::mutex m_mutex; // guards the members below
   std::set<std::pair<std::string, std::uint32_t>> m_bound;

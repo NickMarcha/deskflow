@@ -138,6 +138,7 @@ bool HidppListener::request(
     return false;
   }
 
+  m_lastError = 0;
   const auto deadline = Clock::now() + std::chrono::milliseconds(500);
   while (Clock::now() < deadline) {
     const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
@@ -162,6 +163,7 @@ bool HidppListener::request(
       }
       // HID++ 2.0 error (0xff) or HID++ 1.0 error (0x8f, e.g. no device in this slot)
       if ((d[2] == 0xFF || d[2] == 0x8F) && d[3] == feature && ours) {
+        m_lastError = d[5];
         return false;
       }
     }
@@ -170,12 +172,57 @@ bool HidppListener::request(
   return false;
 }
 
-void HidppListener::probe(Node &node, std::uint8_t index)
+void HidppListener::enableNotifications(Node &node)
+{
+  // A receiver reports (re)connected devices (0x41) only once the host turns on
+  // "wireless notifications" in its register 0x00. The kernel's Logitech driver
+  // does that; with hid-generic nobody does. Read, set the bit, write back.
+  auto shortRequest = [&node](std::uint8_t subId, const std::array<std::uint8_t, 3> &params, std::array<std::uint8_t, 3> &reply) {
+    const std::array<std::uint8_t, 7> msg{kShortReport, 0xFF, subId, 0x00, params[0], params[1], params[2]};
+    if (write(node.fd, msg.data(), msg.size()) != static_cast<ssize_t>(msg.size())) {
+      return false;
+    }
+    const auto deadline = Clock::now() + std::chrono::milliseconds(500);
+    while (Clock::now() < deadline) {
+      pollfd pfd{node.fd, POLLIN, 0};
+      if (poll(&pfd, 1, 100) <= 0) {
+        continue;
+      }
+      std::array<std::uint8_t, 64> buf{};
+      const ssize_t len = read(node.fd, buf.data(), buf.size());
+      if (len >= 7 && buf[1] == 0xFF && buf[2] == subId && buf[3] == 0x00) {
+        std::copy_n(buf.begin() + 4, 3, reply.begin());
+        return true;
+      }
+      if (len >= 7 && buf[1] == 0xFF && buf[2] == 0x8F && buf[3] == subId) {
+        return false;
+      }
+    }
+    return false;
+  };
+  std::array<std::uint8_t, 3> flags{};
+  if (!shortRequest(0x81, {0, 0, 0}, flags)) {
+    LOG_DEBUG("hidpp: cannot read the receiver's notification flags");
+    return;
+  }
+  if (flags[1] & 0x01) {
+    return;
+  }
+  flags[1] |= 0x01;
+  std::array<std::uint8_t, 3> ignored{};
+  if (shortRequest(0x80, flags, ignored)) {
+    LOG_DEBUG("hidpp: turned on the receiver's wireless notifications");
+  }
+}
+
+bool HidppListener::probe(Node &node, std::uint8_t index)
 {
   node.devices.erase(index);
   std::vector<std::uint8_t> r;
   if (!request(node, index, 0x00, 0, {kReprogControls >> 8, kReprogControls & 0xFF}, r) || r.empty() || r[0] == 0) {
-    return;
+    // 0x09 (unknown device) means an empty slot; no answer usually means a paired
+    // device that is asleep, switched off or still reconnecting
+    return m_lastError == 0x09 || (!r.empty() && r[0] == 0);
   }
   Device dev;
   dev.feature = r[0];
@@ -199,7 +246,7 @@ void HidppListener::probe(Node &node, std::uint8_t index)
   }
 
   if (!request(node, index, dev.feature, 0, {}, r) || r.empty()) {
-    return;
+    return false;
   }
   const std::uint8_t count = r[0];
   std::string list;
@@ -231,6 +278,7 @@ void HidppListener::probe(Node &node, std::uint8_t index)
     }
   }
   node.devices[index] = std::move(dev);
+  return true;
 }
 
 void HidppListener::applyDiversion(Node &node)
@@ -334,8 +382,11 @@ void HidppListener::scan()
     }
     Node &node = m_nodes[path];
     node.fd = fd;
+    enableNotifications(node);
     for (std::uint8_t index = 1; index <= 6; ++index) {
-      probe(node, index);
+      if (!probe(node, index)) {
+        node.unanswered.insert(index);
+      }
     }
   }
 }
@@ -389,8 +440,13 @@ void HidppListener::run()
       if (!node.reprobe.empty()) {
         const auto indexes = std::exchange(node.reprobe, {});
         for (auto index : indexes) {
-          probe(node, index);
+          if (probe(node, index)) {
+            node.unanswered.erase(index);
+          } else {
+            node.unanswered.insert(index);
+          }
         }
+        applyDiversion(node);
       }
     }
 
@@ -408,6 +464,24 @@ void HidppListener::run()
     }
     if (now - lastScan >= std::chrono::seconds(5)) {
       lastScan = now;
+      // fallback for receivers that don't send connection notifications
+      for (auto &[path, node] : m_nodes) {
+        if (node.unanswered.empty()) {
+          continue;
+        }
+        bool found = false;
+        for (auto it = node.unanswered.begin(); it != node.unanswered.end();) {
+          if (probe(node, *it)) {
+            found = found || node.devices.contains(*it);
+            it = node.unanswered.erase(it);
+          } else {
+            ++it;
+          }
+        }
+        if (found) {
+          applyDiversion(node);
+        }
+      }
       scan();
     }
   }
