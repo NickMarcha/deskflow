@@ -39,6 +39,7 @@ STEP = {"left": (-1, 0), "right": (1, 0), "up": (0, -1), "down": (0, 1)}
 ENV_KEYS = (
     "DESKFLOW_EVDEV_MATCH",
     "DESKFLOW_EVDEV_IGNORE",
+    "DESKFLOW_EVDEV_KEYS",
     "DESKFLOW_EVDEV_SHAPE",
     "DESKFLOW_EVDEV_ACCEL",
     "DESKFLOW_EVDEV_REPEAT",

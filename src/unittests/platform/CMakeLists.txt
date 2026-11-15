@@ -35,6 +35,15 @@ elseif(UNIX)
     )
   endif()
 
+  # header only, no libinput needed
+  create_test(
+    NAME EvdevDeviceFilterTests
+    DEPENDS platform
+    LIBS base arch
+    SOURCE EvdevDeviceFilterTests.cpp
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/src/lib/platform"
+  )
+
   if (BUILD_X11_SUPPORT)
     create_test(
       NAME XWindowsClipboardTests

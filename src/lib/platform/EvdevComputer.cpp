@@ -41,26 +41,7 @@ namespace deskflow {
 
 namespace {
 
-std::vector<std::string> splitList(const char *value)
-{
-  std::vector<std::string> out;
-  if (!value)
-    return out;
-  std::stringstream ss(value);
-  std::string item;
-  while (std::getline(ss, item, ',')) {
-    item.erase(0, item.find_first_not_of(' '));
-    item.erase(item.find_last_not_of(' ') + 1);
-    if (!item.empty())
-      out.push_back(item);
-  }
-  return out;
-}
-
-bool containsAny(const std::string &name, const std::vector<std::string> &needles)
-{
-  return std::any_of(needles.begin(), needles.end(), [&](const auto &n) { return name.find(n) != std::string::npos; });
-}
+using evdev::splitList;
 
 std::int64_t mtimeNs(const struct stat &st)
 {
@@ -142,8 +123,10 @@ ButtonID mapButton(std::uint32_t code)
 EvdevComputer::EvdevComputer(IEventQueue *events)
     : PlatformComputer{events},
       m_events{events},
-      m_match{splitList(std::getenv("DESKFLOW_EVDEV_MATCH"))},
-      m_ignore{splitList(std::getenv("DESKFLOW_EVDEV_IGNORE"))}
+      m_filter{
+          splitList(std::getenv("DESKFLOW_EVDEV_MATCH")), splitList(std::getenv("DESKFLOW_EVDEV_IGNORE")),
+          splitList(std::getenv("DESKFLOW_EVDEV_KEYS"))
+      }
 {
   if (const char *shape = std::getenv("DESKFLOW_EVDEV_SHAPE")) {
     int w = 0;
@@ -224,6 +207,7 @@ EvdevComputer::EvdevComputer(IEventQueue *events)
         QJsonObject{
             {"match", env("DESKFLOW_EVDEV_MATCH")},
             {"ignore", env("DESKFLOW_EVDEV_IGNORE")},
+            {"keys", env("DESKFLOW_EVDEV_KEYS")},
             {"shape", QStringLiteral("%1x%2").arg(m_w).arg(m_h)},
             {"accel", m_accelSpeed},
             {"repeatDelayMs", static_cast<int>(std::lround(m_repeatDelay * 1000))},
@@ -274,56 +258,37 @@ EvdevComputer::~EvdevComputer()
   delete m_keyState;
 }
 
-bool EvdevComputer::wantDevice(const std::string &name, bool isKeyboard, bool isPointer) const
-{
-  if (!isKeyboard && !isPointer)
-    return false;
-  if (containsAny(name, m_ignore))
-    return false;
-  if (!m_match.empty() && !containsAny(name, m_match))
-    return false;
-  return true;
-}
-
 int EvdevComputer::openRestricted(const char *path, int flags)
 {
   // Decide here whether to take the device at all: refusing the open makes
   // libinput skip it, which keeps e.g. headset volume buttons untouched.
-  std::string name;
-  bool isKeyboard = false;
-  bool isPointer = false;
-  bool isCompanion = false;
+  evdev::NodeInfo node;
   struct stat st{};
   if (stat(path, &st) == 0) {
     if (udev_device *dev = udev_device_new_from_devnum(m_udev, 'c', st.st_rdev); dev) {
-      isKeyboard = hasProperty(dev, "ID_INPUT_KEYBOARD");
-      isPointer = hasProperty(dev, "ID_INPUT_MOUSE") || hasProperty(dev, "ID_INPUT_TOUCHPAD");
-      // A keys-only node (media, power or volume keys) is taken only when the same
-      // USB device also has a keyboard or mouse, e.g. a receiver's Consumer Control
-      // node. A headset's volume buttons have no such sibling and stay untouched.
-      // ID_INPUT_POINTINGSTICK is treated the same way rather than trusted on its
-      // own: hwdb sets it on every node of some TrackPoint keyboards.
-      if (!isKeyboard && !isPointer && (hasProperty(dev, "ID_INPUT_KEY") || hasProperty(dev, "ID_INPUT_POINTINGSTICK"))) {
-        isCompanion = hasInputSibling(dev);
+      node.keyboard = hasProperty(dev, "ID_INPUT_KEYBOARD");
+      node.pointer = hasProperty(dev, "ID_INPUT_MOUSE") || hasProperty(dev, "ID_INPUT_TOUCHPAD");
+      node.keys = hasProperty(dev, "ID_INPUT_KEY");
+      node.pointingStick = hasProperty(dev, "ID_INPUT_POINTINGSTICK");
+      if (!node.keyboard && !node.pointer && (node.keys || node.pointingStick)) {
+        node.hasSibling = hasInputSibling(dev);
       }
       if (udev_device *parent = udev_device_get_parent(dev)) {
         if (const char *n = udev_device_get_sysattr_value(parent, "name")) {
-          name = n;
+          node.name = n;
         }
       }
       udev_device_unref(dev);
     }
   }
 
-  const char *kind = isKeyboard && isPointer ? "keyboard+pointer"
-                     : isKeyboard                ? "keyboard"
-                     : isPointer                 ? "pointer"
-                     : isCompanion               ? "keys"
-                                                 : "other";
-  if (!wantDevice(name, isKeyboard || isCompanion, isPointer)) {
+  // see evdev::chooseDevice for which nodes are taken
+  const auto choice = evdev::chooseDevice(node, m_filter);
+  const std::string &name = node.name;
+  const char *kind = choice.kind;
+  if (std::strcmp(choice.state, "used") != 0) {
     LOG_DEBUG("evdev: skipping %s (%s)", path, name.c_str());
-    // "filtered" is a keyboard or mouse left out by DESKFLOW_EVDEV_MATCH/IGNORE
-    setDeviceStatus(path, name, kind, isKeyboard || isCompanion || isPointer ? "filtered" : "skipped");
+    setDeviceStatus(path, name, kind, choice.state);
     return -EACCES;
   }
 
@@ -339,8 +304,8 @@ int EvdevComputer::openRestricted(const char *path, int flags)
     LOG_WARN("evdev: cannot grab %s: %s", path, strerror(errno));
   }
   LOG_INFO(
-      "evdev: using %s (%s)%s%s%s", path, name.c_str(), isKeyboard ? " keyboard" : "", isPointer ? " pointer" : "",
-      isCompanion ? " keys" : ""
+      "evdev: using %s (%s)%s%s%s", path, name.c_str(), node.keyboard ? " keyboard" : "",
+      node.pointer ? " pointer" : "", choice.companion ? " keys" : ""
   );
   setDeviceStatus(path, name, kind, "used");
   return fd;
@@ -854,12 +819,11 @@ bool EvdevComputer::applyBinding(const std::string &name, std::uint32_t code, bo
     );
   }
 
-  const auto it = std::find_if(m_bindings.begin(), m_bindings.end(), [&](const Binding &b) {
-    return b.code == code && (b.device.empty() || b.device == name);
-  });
-  if (it == m_bindings.end()) {
+  const int index = evdev::findBinding(m_bindings, name, code);
+  if (index < 0) {
     return false;
   }
+  const auto it = m_bindings.begin() + index;
   // press in order and release in reverse, so modifiers wrap the key
   auto emit = [this, pressed](std::uint32_t c) {
     if (c >= BTN_MISC && c < KEY_OK) {

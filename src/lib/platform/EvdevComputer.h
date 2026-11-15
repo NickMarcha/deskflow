@@ -7,6 +7,7 @@
 #pragma once
 
 #include "deskflow/PlatformComputer.h"
+#include "platform/EvdevDeviceFilter.h"
 
 #include <array>
 #include <bitset>
@@ -40,6 +41,9 @@ Configuration (environment, read once at startup):
   DESKFLOW_EVDEV_MATCH   comma-separated name substrings; only matching devices
                          are used (default: every udev keyboard or mouse)
   DESKFLOW_EVDEV_IGNORE  comma-separated name substrings to skip
+  DESKFLOW_EVDEV_KEYS    comma-separated name substrings; keys-only nodes with
+                         no keyboard or mouse beside them (a headset's media
+                         buttons) are used only when they match
   DESKFLOW_EVDEV_SHAPE   virtual screen size WxH (default 1920x1080)
   DESKFLOW_EVDEV_ACCEL   libinput pointer speed, -1.0 .. 1.0 (default 0)
   DESKFLOW_EVDEV_REPEAT  key repeat delay_ms,rate_hz (default 500,30)
@@ -104,7 +108,6 @@ protected:
 
 private:
   void sendEvent(EventTypes type, void *data);
-  bool wantDevice(const std::string &name, bool isKeyboard, bool isPointer) const;
   void onDeviceAdded(libinput_device *device);
   void onKeyEvent(libinput_event *event);
   void onButtonEvent(libinput_event *event);
@@ -127,7 +130,7 @@ private:
   // one physical input on one device, remapped to other evdev key/button codes
   struct Binding
   {
-    std::string device; // exact device name, empty for any device
+    std::string device; // device name or part of it, empty for any device
     std::uint32_t code = 0;
     std::vector<std::uint32_t> send;
   };
@@ -157,8 +160,7 @@ private:
   std::unique_ptr<class HidppManager> m_hidppManager;
   std::chrono::steady_clock::time_point m_lastLogitechInput{};
 
-  std::vector<std::string> m_match;
-  std::vector<std::string> m_ignore;
+  evdev::DeviceFilter m_filter;
   double m_accelSpeed = 0.0;
   double m_repeatDelay = 0.5;
   double m_repeatInterval = 1.0 / 30.0;

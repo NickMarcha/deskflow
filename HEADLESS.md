@@ -47,6 +47,7 @@ Options, read once at startup. The unit loads them from `~/.config/deskflow-head
 |---|---|---|
 | `DESKFLOW_EVDEV_MATCH` | (all) | Comma-separated name substrings. Only matching devices are used. |
 | `DESKFLOW_EVDEV_IGNORE` | (none) | Comma-separated name substrings to skip. |
+| `DESKFLOW_EVDEV_KEYS` | (none) | Comma-separated name substrings. Keys-only devices with no keyboard or mouse beside them, such as a headset's buttons, are used when their name matches. `DESKFLOW_EVDEV_IGNORE` and `DESKFLOW_EVDEV_MATCH` still apply to them. |
 | `DESKFLOW_EVDEV_SHAPE` | `1920x1080` | Size of the virtual screen. |
 | `DESKFLOW_EVDEV_ACCEL` | `0` | libinput pointer speed, -1.0 to 1.0. |
 | `DESKFLOW_EVDEV_REPEAT` | `500,30` | Key repeat delay in ms and rate in Hz. |
@@ -54,7 +55,23 @@ Options, read once at startup. The unit loads them from `~/.config/deskflow-head
 | `DESKFLOW_EVDEV_HIDPP` | `0` | `1` reads extra Logitech controls (MX Master thumb and wheel-mode buttons) over HID++ so they can be bound. Needs read/write access to the receiver's hidraw node. On a Raspberry Pi 4 with a Bolt receiver this currently stops the mouse from moving while enabled. |
 | `XKB_DEFAULT_OPTIONS` | `srvrkeys:none` | xkb options. The default keeps Ctrl+Alt+F1..F12 as F-keys instead of console switching, so hotkeys like `keystroke(Control+Alt+F12)` work. |
 
-Only devices udev tags as a keyboard or mouse are considered. Headset volume buttons and HDMI-CEC remotes show up as "keys" but not as keyboards, so they're left alone.
+Only devices udev tags as a keyboard or mouse are considered, plus keys-only nodes (media and volume keys) of the same USB device, like a receiver's Consumer Control node. Headset buttons and HDMI-CEC remotes have no keyboard or mouse beside them, so they're left alone unless `DESKFLOW_EVDEV_KEYS` names them.
+
+### Headset buttons
+
+A HyperX Cloud III S Wireless dongle has a node named `HP, Inc HyperX Cloud III S Wireless Consumer Control`. Its button sends play/pause, next track on a double press and previous track on a triple press; the wheel sends volume up and down. To use it, add this to `~/.config/deskflow-headless/env` (or press Use next to it under Input devices in the web UI) and restart the server:
+
+```sh
+DESKFLOW_EVDEV_KEYS="HyperX Cloud III S Wireless Consumer Control"
+```
+
+Leave out the `HP, ` part: the list is split at commas. The dongle's other keys-only node (`HP, Inc HyperX Cloud III S Wireless`) doesn't match this name and stays untouched. The device is taken again after a replug.
+
+Its keys then go to the active computer like any keyboard's media keys, unless a binding in `bindings.json` catches them. A binding's `device` is the device name or a part of it; the exact name wins over a part, and a part over a binding with no device. This one turns the double press (163, `KEY_NEXTSONG`) into Ctrl+Alt+F8 on the server, so a hotkey in the server config can act on it:
+
+```json
+{"bindings": [{"device": "HyperX", "code": 163, "send": [29, 56, 66], "label": "Control+Alt+F8"}]}
+```
 
 In the server config, don't link anything into the Pi's own screen if you never want the cursor to land there, or use hotkeys such as `keystroke(control+alt+right) = switchToScreen(desk)`.
 

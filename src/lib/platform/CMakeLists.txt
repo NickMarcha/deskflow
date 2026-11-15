@@ -163,6 +163,7 @@ elseif(UNIX)
       list(APPEND PLATFORM_SOURCES
         EvdevComputer.cpp
         EvdevComputer.h
+        EvdevDeviceFilter.h
         EvdevEventQueueBuffer.cpp
         EvdevEventQueueBuffer.h
         HidppListener.cpp

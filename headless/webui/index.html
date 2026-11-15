@@ -259,7 +259,7 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
 
   <section id="input-section">
     <h2>Input devices</h2>
-    <p class="hint">Everything plugged into this server. The server uses keyboards and mice and leaves everything else alone, such as headset buttons. Saving restarts the server.</p>
+    <p class="hint">Everything plugged into this server. The server uses keyboards and mice and leaves everything else alone, such as headset buttons, unless you pick Use on them. Saving restarts the server.</p>
     <div class="table-scroll">
       <table>
         <thead><tr><th>Device</th><th>Node</th><th>Type</th><th>State</th><th style="width:1%"></th></tr></thead>
@@ -280,6 +280,7 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
 const INPUT_FIELDS = [
   ["DESKFLOW_EVDEV_MATCH", "Only use devices whose name contains", "all devices", "Comma separated"],
   ["DESKFLOW_EVDEV_IGNORE", "Ignore devices whose name contains", "none", "Comma separated"],
+  ["DESKFLOW_EVDEV_KEYS", "Also use extra keys (headset buttons) whose name contains", "none", "Comma separated"],
   ["DESKFLOW_EVDEV_REPEAT", "Key repeat (delay ms, rate Hz)", "500,30"],
   ["DESKFLOW_EVDEV_ACCEL", "Pointer speed (-1 to 1)", "0"],
   ["XKB_DEFAULT_LAYOUT", "Keyboard layout", "us"],
@@ -705,6 +706,12 @@ function listOf(value) {
   return value.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+// The lists are comma separated, so a name with a comma in it ("HP, Inc HyperX ...")
+// goes in as its longest comma-free part.
+function listEntry(name) {
+  return listOf(name).reduce((a, b) => (b.length > a.length ? b : a), "");
+}
+
 function renderInputFields() {
   const box = document.getElementById("input-fields");
   box.replaceChildren();
@@ -727,13 +734,25 @@ function renderDevices() {
     return;
   }
   const ignored = listOf(inputDraft.DESKFLOW_EVDEV_IGNORE || "");
+  const extraKeys = listOf(inputDraft.DESKFLOW_EVDEV_KEYS || "");
   for (const d of devices) {
     const isIgnored = ignored.some((n) => d.name.includes(n));
     let button = "";
-    if (d.state === "used" || d.state === "filtered") {
+    const isAdded = d.kind === "keys" && extraKeys.some((n) => d.name.includes(n));
+    if (d.kind === "keys" && d.name && (d.state === "skipped" || isAdded)) {
+      // keys-only device with no keyboard or mouse beside it, e.g. a headset
+      button = el("button", { onclick: () => {
+        const list = listOf(inputDraft.DESKFLOW_EVDEV_KEYS || "");
+        inputDraft.DESKFLOW_EVDEV_KEYS = (isAdded ? list.filter((n) => !d.name.includes(n)) : [...list, listEntry(d.name)]).join(", ");
+        dirty.input = true;
+        setMsg("input-msg", "Unsaved changes");
+        renderInputFields();
+        renderDevices();
+      } }, isAdded ? "Don't use" : "Use");
+    } else if (d.state === "used" || d.state === "filtered") {
       button = el("button", { onclick: () => {
         const list = listOf(inputDraft.DESKFLOW_EVDEV_IGNORE || "");
-        inputDraft.DESKFLOW_EVDEV_IGNORE = (isIgnored ? list.filter((n) => !d.name.includes(n)) : [...list, d.name]).join(", ");
+        inputDraft.DESKFLOW_EVDEV_IGNORE = (isIgnored ? list.filter((n) => !d.name.includes(n)) : [...list, listEntry(d.name)]).join(", ");
         dirty.input = true;
         setMsg("input-msg", "Unsaved changes");
         renderInputFields();
