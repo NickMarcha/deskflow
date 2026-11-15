@@ -19,7 +19,7 @@ The `headless` branch carries a short stack of commits on top of the latest upst
 - `ServerApp::createComputer()` picks the backend when `DESKFLOW_BACKEND=evdev` is set. Without it, Deskflow behaves exactly like upstream.
 - `EiKeyState::keyRepeats()`: a small helper the backend uses.
 - `src/lib/common/HeadlessStatus.{h,cpp}`: when `DESKFLOW_STATUS_DIR` is set, the server writes `status.json` there: connected clients and their screen sizes, which computer has the cursor, every input device and whether it's used, and the result of the last config reload. Nothing is written when the variable is unset.
-- `deskflow-core` blocks SIGHUP before Qt starts its threads. Upstream already reloads the server config on SIGHUP, but in 1.27 the signal can land on a Qt thread and kill the process instead.
+- `deskflow-core` blocks SIGHUP, SIGINT, SIGTERM and SIGUSR2 before Qt starts its threads, so they reach Arch's signal thread: SIGHUP reloads the server config and SIGTERM shuts down cleanly. In 1.27 they can land on a Qt thread and kill the process instead. This is upstream PR deskflow/deskflow#10382 (issue #10335), carried here until it is merged.
 - `headless/webui/`: the web UI (below). `headless/systemd/`: user units for the server and the web UI. Both are installed by the `.deb`.
 - `.github/workflows/headless-*.yml`, this file and a banner on the README.
 

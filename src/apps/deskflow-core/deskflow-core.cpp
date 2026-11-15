@@ -19,6 +19,9 @@
 
 #if defined(Q_OS_WIN)
 #include "arch/win32/ArchMiscWindows.h"
+#else
+#include <pthread.h>
+#include <signal.h>
 #endif
 
 #include <QApplication>
@@ -26,10 +29,6 @@
 #include <QSharedMemory>
 #include <QTextStream>
 #include <QThread>
-
-#if !defined(Q_OS_WIN)
-#include <csignal>
-#endif
 
 void qtMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
 {
@@ -76,14 +75,16 @@ int main(int argc, char **argv)
 #if defined(Q_OS_WIN)
   ArchMiscWindows::setInstanceWin32(GetModuleHandle(nullptr));
 #else
-  // Block SIGHUP before Qt starts any threads, so every thread inherits the
-  // block and only Arch's signal thread (sigwait) receives it. Otherwise the
-  // kernel can deliver it to a Qt thread, whose default action kills the
-  // process instead of reloading the server config.
-  sigset_t hangup;
-  sigemptyset(&hangup);
-  sigaddset(&hangup, SIGHUP);
-  pthread_sigmask(SIG_BLOCK, &hangup, nullptr);
+  // Block the signals Arch's signal thread waits for before Qt or any
+  // background threads start, so the main thread and every subsequent
+  // thread inherit the signal mask.
+  sigset_t signals;
+  sigemptyset(&signals);
+  sigaddset(&signals, SIGHUP);
+  sigaddset(&signals, SIGINT);
+  sigaddset(&signals, SIGTERM);
+  sigaddset(&signals, SIGUSR2);
+  pthread_sigmask(SIG_BLOCK, &signals, nullptr);
 #endif
 
   QApplication::setApplicationName(QStringLiteral("%1 Core").arg(kAppName));
