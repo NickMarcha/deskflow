@@ -159,6 +159,8 @@ enum class EventTypes : uint32_t
   ServerAppResetServer,
   /// Sends a keystroke requested over IPC. Event data is a KeystrokeRequest (ServerApp.cpp).
   ServerAppKeystroke,
+  /// Switches to a computer requested over IPC. Event data is a KeystrokeRequest holding the name.
+  ServerAppSwitch,
 
   /// This event is sent when key is down. Event data is a pointer to KeyInfo (count == 1)
   KeyStateKeyDown,

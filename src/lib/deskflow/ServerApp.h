@@ -85,6 +85,8 @@ public:
   void handleSuspend();
   void handleResume();
   void requestKeystroke(const std::string &keystroke, std::function<void(const QString &error)> reply);
+  /// Makes a connected computer the active one, from the IPC `switch=` command.
+  void requestSwitch(const std::string &computer, std::function<void(const QString &error)> reply);
   ClientListener *openClientListener(const NetworkAddress &address);
   Server *openServer(ServerConfig &config, PrimaryClient *primaryClient);
   bool startServer();
@@ -106,6 +108,7 @@ public:
 private:
   void handleComputerSwitched() const;
   QString sendKeystroke(const std::string &keystroke);
+  QString switchToComputer(const std::string &computer);
   std::unique_ptr<ISocketFactory> getSocketFactory() const;
   NetworkAddress getAddress(const NetworkAddress &address) const;
 

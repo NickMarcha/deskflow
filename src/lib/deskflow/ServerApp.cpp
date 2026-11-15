@@ -53,6 +53,7 @@
 #include "platform/OSXComputer.h"
 #endif
 
+#include <algorithm>
 #include <fstream>
 
 using namespace deskflow::server;
@@ -111,6 +112,32 @@ void ServerApp::requestKeystroke(const std::string &keystroke, std::function<voi
   events->addEvent(
       Event(EventTypes::ServerAppKeystroke, events->getSystemTarget(), new KeystrokeRequest(keystroke, std::move(reply)))
   );
+}
+
+void ServerApp::requestSwitch(const std::string &computer, std::function<void(const QString &error)> reply)
+{
+  IEventQueue *events = getEvents();
+  events->addEvent(
+      Event(EventTypes::ServerAppSwitch, events->getSystemTarget(), new KeystrokeRequest(computer, std::move(reply)))
+  );
+}
+
+QString ServerApp::switchToComputer(const std::string &computer)
+{
+  if (m_server == nullptr) {
+    return QStringLiteral("the server is not running");
+  }
+  std::vector<std::string> connected;
+  m_server->getClients(connected);
+  if (std::ranges::find(connected, computer) == connected.end()) {
+    return QStringLiteral("%1 isn't connected").arg(QString::fromStdString(computer));
+  }
+
+  // same path as a switchToScreen() action in the config
+  InputFilter::SwitchToComputerAction action(getEvents(), computer);
+  action.perform(Event(EventTypes::Unknown, m_config->getInputFilter()));
+  LOG_INFO("switch to \"%s\" from ipc", computer.c_str());
+  return {};
 }
 
 QString ServerApp::sendKeystroke(const std::string &keystroke)
@@ -627,6 +654,11 @@ int ServerApp::mainLoop()
     request->m_reply(sendKeystroke(request->m_keystroke));
   });
 
+  getEvents()->addHandler(EventTypes::ServerAppSwitch, getEvents()->getSystemTarget(), [this](const auto &e) {
+    const auto *request = static_cast<KeystrokeRequest *>(e.getDataObject());
+    request->m_reply(switchToComputer(request->m_keystroke));
+  });
+
   // run event loop.  if startServer() failed we're supposed to retry
   // later.  the timer installed by startServer() will take care of
   // that.
@@ -637,6 +669,7 @@ int ServerApp::mainLoop()
   getEvents()->removeHandler(EventTypes::ServerAppForceReconnect, getEvents()->getSystemTarget());
   getEvents()->removeHandler(EventTypes::ServerAppReloadConfig, getEvents()->getSystemTarget());
   getEvents()->removeHandler(EventTypes::ServerAppKeystroke, getEvents()->getSystemTarget());
+  getEvents()->removeHandler(EventTypes::ServerAppSwitch, getEvents()->getSystemTarget());
   cleanupServer();
   LOG_INFO("stopped server");
 
