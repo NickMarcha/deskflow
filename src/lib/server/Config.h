@@ -311,6 +311,14 @@ public:
   */
   std::string getCanonicalName(const std::string &name) const;
 
+  //! Parse the arguments of a keystroke action
+  /*!
+  Parses \c action like the arguments of a \c keystroke() action in the
+  config file (\c modifiers+key[,computers]) and returns the key info,
+  allocated with malloc().  Throws ServerConfigReadException on error.
+  */
+  IPlatformComputer::KeyInfo *parseKeystrokeAction(const std::string &action) const;
+
   //! Get neighbor
   /*!
   Returns the canonical computer name of the neighbor in the given

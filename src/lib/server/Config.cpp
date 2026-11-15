@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <istream>
 #include <ostream>
+#include <sstream>
 
 using namespace deskflow::string;
 
@@ -956,6 +957,28 @@ void Config::parseAction(
   }
 
   rule.adoptAction(action, activate);
+}
+
+IPlatformComputer::KeyInfo *Config::parseKeystrokeAction(const std::string &action) const
+{
+  std::istringstream stream;
+  ConfigReadContext context(stream);
+
+  const std::string line = "keystroke(" + action + ")";
+  std::string::size_type index = 0;
+  std::string name;
+  ConfigReadContext::ArgList args;
+  context.parseNameWithArgs("action", line, "", index, name, args);
+  if (index != line.size() || args.empty() || args.size() > 2) {
+    throw ServerConfigReadException(context, "syntax for keystroke: modifiers+key[,computers]");
+  }
+
+  if (args.size() == 1) {
+    return context.parseKeystroke(args[0]);
+  }
+  std::set<std::string> computers;
+  parseComputers(context, args[1], computers);
+  return context.parseKeystroke(args[0], computers);
 }
 
 void Config::parseComputers(
