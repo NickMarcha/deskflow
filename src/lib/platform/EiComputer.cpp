@@ -389,7 +389,7 @@ void EiComputer::fakeKey(uint32_t keycode, bool isDown) const
 
   auto xkbKeycode = keycode + 8;
   m_keyState->updateXkbState(xkbKeycode, isDown);
-  ensureEmulating();
+  ensureEmulating(true);
   ei_device_keyboard_key(m_eiKeyboard, keycode, isDown);
   ei_device_frame(m_eiKeyboard, ei_now(m_ei));
 }
@@ -414,20 +414,24 @@ void EiComputer::cancelIdleEmulationTimer() const
   }
 }
 
-void EiComputer::ensureEmulating() const
+void EiComputer::ensureEmulating(bool forKey) const
 {
-  if (m_isPrimary || !m_isOnComputer)
+  // keys can arrive while not on this computer, e.g. from a keystroke action
+  if (m_isPrimary || (!m_isOnComputer && !forKey))
     return;
 
-  if (!m_isEmulating) {
+  if (m_isOnComputer && !m_isEmulating) {
     ++m_sequenceNumber;
     if (m_eiPointer)
       ei_device_start_emulating(m_eiPointer, m_sequenceNumber);
-    if (m_eiKeyboard)
-      ei_device_start_emulating(m_eiKeyboard, m_sequenceNumber);
     if (m_eiAbs)
       ei_device_start_emulating(m_eiAbs, m_sequenceNumber);
     m_isEmulating = true;
+  }
+
+  if (m_eiKeyboard && !m_isKeyboardEmulating) {
+    ei_device_start_emulating(m_eiKeyboard, ++m_sequenceNumber);
+    m_isKeyboardEmulating = true;
   }
 
   cancelIdleEmulationTimer();
@@ -441,12 +445,13 @@ void EiComputer::ensureEmulating() const
 void EiComputer::stopEmulating() const
 {
   cancelIdleEmulationTimer();
+  if (m_isKeyboardEmulating && m_eiKeyboard)
+    ei_device_stop_emulating(m_eiKeyboard);
+  m_isKeyboardEmulating = false;
   if (!m_isEmulating)
     return;
   if (m_eiPointer)
     ei_device_stop_emulating(m_eiPointer);
-  if (m_eiKeyboard)
-    ei_device_stop_emulating(m_eiKeyboard);
   if (m_eiAbs)
     ei_device_stop_emulating(m_eiAbs);
   m_isEmulating = false;
@@ -671,6 +676,7 @@ void EiComputer::removeDevice(struct ei_device *device)
 
   if (wasTracked) {
     m_isEmulating = false;
+    m_isKeyboardEmulating = false;
     cancelIdleEmulationTimer();
     // same as for a paused device: no release events follow a removal
     updateButtons();
@@ -1016,6 +1022,7 @@ void EiComputer::handleSystemEvent(const Event &)
     case EI_EVENT_DEVICE_PAUSED:
       LOG_DEBUG("device %s is paused", ei_device_get_name(device));
       m_isEmulating = false;
+      m_isKeyboardEmulating = false;
       // a paused device is reset to neutral by the EIS side and sends no
       // further events, so the releases for held buttons never arrive
       updateButtons();

@@ -132,7 +132,7 @@ private:
 
   void handleConnectedToEisEvent(const Event &event);
   void handlePortalSessionClosed();
-  void ensureEmulating() const;
+  void ensureEmulating(bool forKey = false) const;
   void stopEmulating() const;
   void cancelIdleEmulationTimer() const;
   void updatePortalGlobalShortcuts();
@@ -174,6 +174,7 @@ private:
   // flowing, and release after a short idle so the compositor can DPMS-sleep
   // this computer even while the deskflow cursor logically sits on it.
   mutable bool m_isEmulating = false;
+  mutable bool m_isKeyboardEmulating = false;
   mutable EventQueueTimer *m_idleEmulationTimer = nullptr;
   // Chosen empirically on one machine in 2026-06; not derived from any protocol constant.
   static constexpr double s_idleEmulationTimeout = 4.0;
