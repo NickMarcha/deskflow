@@ -733,6 +733,12 @@ function listOf(value) {
   return value.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+// The lists are comma separated, so a name with a comma in it ("HP, Inc HyperX ...")
+// goes in as its longest comma-free part.
+function listEntry(name) {
+  return listOf(name).reduce((a, b) => (b.length > a.length ? b : a), "");
+}
+
 function renderInputFields() {
   const box = document.getElementById("input-fields");
   box.replaceChildren();
@@ -761,7 +767,7 @@ function renderDevices() {
     if (d.state === "used" || d.state === "filtered") {
       button = el("button", { onclick: () => {
         const list = listOf(inputDraft.DESKFLOW_EVDEV_IGNORE || "");
-        inputDraft.DESKFLOW_EVDEV_IGNORE = (isIgnored ? list.filter((n) => !d.name.includes(n)) : [...list, d.name]).join(", ");
+        inputDraft.DESKFLOW_EVDEV_IGNORE = (isIgnored ? list.filter((n) => !d.name.includes(n)) : [...list, listEntry(d.name)]).join(", ");
         dirty.input = true;
         setMsg("input-msg", "Unsaved changes");
         renderInputFields();
