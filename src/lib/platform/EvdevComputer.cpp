@@ -12,6 +12,7 @@
 #include "deskflow/IPrimaryComputer.h"
 #include "platform/EiKeyState.h"
 #include "platform/EvdevEventQueueBuffer.h"
+#include "platform/HidppListener.h"
 
 #include <algorithm>
 #include <bit>
@@ -30,6 +31,7 @@
 #include <linux/input.h>
 #include <sstream>
 #include <stdexcept>
+#include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -198,7 +200,16 @@ EvdevComputer::EvdevComputer(IEventQueue *events)
   m_events->addHandler(EventTypes::System, m_events->getSystemTarget(), [this](const auto &e) {
     handleSystemEvent(e);
   });
-  m_events->adoptBuffer(new EvdevEventQueueBuffer(libinput_get_fd(m_libinput), m_events));
+  // opt-in: on a Raspberry Pi 4 with a Logi Bolt receiver, holding the HID++
+  // node open stops the mouse from moving (#125), so it stays off by default
+  if (qEnvironmentVariable("DESKFLOW_EVDEV_HIDPP") == QStringLiteral("1")) {
+    m_hidppWake = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (m_hidppWake >= 0) {
+      m_hidpp = std::make_unique<HidppListener>(m_hidppWake, m_identifyPath);
+      loadBindings();
+    }
+  }
+  m_events->adoptBuffer(new EvdevEventQueueBuffer(libinput_get_fd(m_libinput), m_events, m_hidppWake));
 
   LOG_INFO("evdev: headless primary, virtual screen %dx%d", m_w, m_h);
   auto env = [](const char *name) { return QString::fromLocal8Bit(std::getenv(name)); };
@@ -238,7 +249,11 @@ void EvdevComputer::setDeviceStatus(const std::string &path, const std::string &
 EvdevComputer::~EvdevComputer()
 {
   stopRepeat();
+  m_hidpp.reset();
   m_events->adoptBuffer(nullptr);
+  if (m_hidppWake >= 0) {
+    close(m_hidppWake);
+  }
   m_events->removeHandler(EventTypes::System, m_events->getSystemTarget());
   for (auto *device : m_keyboards) {
     libinput_device_unref(device);
@@ -527,6 +542,14 @@ void EvdevComputer::sendEvent(EventTypes type, void *data)
 
 void EvdevComputer::handleSystemEvent(const Event &)
 {
+  if (m_hidpp) {
+    std::uint64_t count = 0;
+    [[maybe_unused]] auto n = read(m_hidppWake, &count, sizeof(count));
+    for (const auto &press : m_hidpp->take()) {
+      // no fallback: these controls have no evdev meaning of their own
+      applyBinding(press.device, press.code, press.pressed);
+    }
+  }
   libinput_dispatch(m_libinput);
   libinput_event *event;
   while ((event = libinput_get_event(m_libinput)) != nullptr) {
@@ -616,7 +639,7 @@ void EvdevComputer::onKeyEvent(libinput_event *event)
   auto *kb = libinput_event_get_keyboard_event(event);
   std::uint32_t keycode = libinput_event_keyboard_get_key(kb);
   bool pressed = libinput_event_keyboard_get_key_state(kb) == LIBINPUT_KEY_STATE_PRESSED;
-  if (!applyBinding(libinput_event_get_device(event), keycode, pressed)) {
+  if (!applyBinding(libinput_device_get_name(libinput_event_get_device(event)), keycode, pressed)) {
     handleKey(keycode, pressed);
   }
 }
@@ -696,7 +719,7 @@ void EvdevComputer::onButtonEvent(libinput_event *event)
   auto *p = libinput_event_get_pointer_event(event);
   std::uint32_t code = libinput_event_pointer_get_button(p);
   bool pressed = libinput_event_pointer_get_button_state(p) == LIBINPUT_BUTTON_STATE_PRESSED;
-  if (!applyBinding(libinput_event_get_device(event), code, pressed)) {
+  if (!applyBinding(libinput_device_get_name(libinput_event_get_device(event)), code, pressed)) {
     handleButton(code, pressed);
   }
 }
@@ -764,12 +787,20 @@ void EvdevComputer::loadBindings()
     }
   }
   LOG_INFO("evdev: %zu input binding(s) from %s", m_bindings.size(), m_bindingsPath.c_str());
+  if (m_hidpp) {
+    std::set<std::pair<std::string, std::uint32_t>> bound;
+    for (const auto &b : m_bindings) {
+      if (b.code >= HidppListener::kCodeBase) {
+        bound.insert({b.device, b.code});
+      }
+    }
+    m_hidpp->setBound(std::move(bound));
+  }
 }
 
-bool EvdevComputer::applyBinding(libinput_device *device, std::uint32_t code, bool pressed)
+bool EvdevComputer::applyBinding(const std::string &name, std::uint32_t code, bool pressed)
 {
   pollControlFiles();
-  const std::string name = device ? libinput_device_get_name(device) : "";
   if (m_identify && pressed) {
     headless::updateStatus(
         {{"lastInput",

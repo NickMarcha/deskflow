@@ -519,7 +519,8 @@ class App:
             code, send = b.get("code"), b.get("send")
             if len(device) > 128 or "\n" in device:
                 raise ApiError("device name too long")
-            if not isinstance(code, int) or not 0 < code < 0x300:
+            # evdev codes, or 0x1000 + CID for Logitech controls read over HID++
+            if not isinstance(code, int) or not 0 < code < 0x2000:
                 raise ApiError(f"bad input code: {code!r}")
             if not (isinstance(send, list) and 0 < len(send) <= 8
                     and all(isinstance(c, int) and 0 < c < 0x300 for c in send)):

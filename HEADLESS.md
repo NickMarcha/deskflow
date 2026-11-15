@@ -51,6 +51,7 @@ Options, read once at startup. The unit loads them from `~/.config/deskflow-head
 | `DESKFLOW_EVDEV_ACCEL` | `0` | libinput pointer speed, -1.0 to 1.0. |
 | `DESKFLOW_EVDEV_REPEAT` | `500,30` | Key repeat delay in ms and rate in Hz. |
 | `XKB_DEFAULT_LAYOUT` | `us` | Keyboard layout of the physical keyboard (libxkbcommon). |
+| `DESKFLOW_EVDEV_HIDPP` | `0` | `1` reads extra Logitech controls (MX Master thumb and wheel-mode buttons) over HID++ so they can be bound. Needs read/write access to the receiver's hidraw node. On a Raspberry Pi 4 with a Bolt receiver this currently stops the mouse from moving while enabled. |
 | `XKB_DEFAULT_OPTIONS` | `srvrkeys:none` | xkb options. The default keeps Ctrl+Alt+F1..F12 as F-keys instead of console switching, so hotkeys like `keystroke(Control+Alt+F12)` work. |
 
 Only devices udev tags as a keyboard or mouse are considered. Headset volume buttons and HDMI-CEC remotes show up as "keys" but not as keyboards, so they're left alone.

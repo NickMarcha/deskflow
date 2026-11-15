@@ -612,7 +612,11 @@ function parseCombo(text) {
   });
 }
 
+// Logitech controls read over HID++ arrive as 0x1000 + CID
+const HIDPP_NAMES = { 0xc3: "ThumbButton", 0xc4: "WheelModeButton", 0xc5: "ThumbButton", 0xd7: "GestureButton" };
+
 function inputName(code) {
+  if (code >= 0x1000) return HIDPP_NAMES[code - 0x1000] || `control 0x${(code - 0x1000).toString(16)}`;
   return NAME_OF[code] || (code >= 0x100 ? `button 0x${code.toString(16)}` : `key ${code}`);
 }
 

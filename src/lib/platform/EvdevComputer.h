@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -118,7 +119,7 @@ private:
   void setDeviceStatus(const std::string &path, const std::string &name, const char *kind, const char *state);
   void handleKey(std::uint32_t keycode, bool pressed);
   void handleButton(std::uint32_t code, bool pressed);
-  bool applyBinding(libinput_device *device, std::uint32_t code, bool pressed);
+  bool applyBinding(const std::string &device, std::uint32_t code, bool pressed);
   void pollControlFiles();
   void loadBindings();
 
@@ -147,6 +148,10 @@ private:
   bool m_identify = false;
   std::uint32_t m_inputSeq = 0;
   std::chrono::steady_clock::time_point m_lastPoll{};
+
+  // extra Logitech controls over HID++ (thumb button etc.), see HidppListener
+  std::unique_ptr<class HidppListener> m_hidpp;
+  int m_hidppWake = -1;
 
   std::vector<std::string> m_match;
   std::vector<std::string> m_ignore;

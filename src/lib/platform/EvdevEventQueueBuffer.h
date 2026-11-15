@@ -20,7 +20,8 @@ namespace deskflow {
 class EvdevEventQueueBuffer : public IEventQueueBuffer
 {
 public:
-  EvdevEventQueueBuffer(int fd, IEventQueue *events);
+  //! \p extraFd (optional) also wakes the loop with a system event; its owner drains it.
+  EvdevEventQueueBuffer(int fd, IEventQueue *events, int extraFd = -1);
   ~EvdevEventQueueBuffer() override;
 
   // IEventQueueBuffer overrides
@@ -35,6 +36,7 @@ public:
 
 private:
   int m_fd;
+  int m_extraFd;
   IEventQueue *m_events;
   std::queue<std::pair<bool, uint32_t>> m_queue;
   int m_pipeWrite;

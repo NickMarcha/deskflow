@@ -21,7 +21,10 @@
 
 namespace deskflow {
 
-EvdevEventQueueBuffer::EvdevEventQueueBuffer(int fd, IEventQueue *events) : m_fd{fd}, m_events{events}
+EvdevEventQueueBuffer::EvdevEventQueueBuffer(int fd, IEventQueue *events, int extraFd)
+    : m_fd{fd},
+      m_extraFd{extraFd},
+      m_events{events}
 {
   // We need a pipe to signal ourselves when addEvent() is called
   int pipefd[2];
@@ -44,18 +47,21 @@ void EvdevEventQueueBuffer::waitForEvent(double msTimeout)
 
   static const auto s_inputFd = 0;
   static const auto s_pipeFd = 1;
-  static const auto s_pollFdCount = 2;
+  static const auto s_extraFd = 2;
+  static const auto s_pollFdCount = 3;
 
   struct pollfd pfds[s_pollFdCount];
   pfds[s_inputFd].fd = m_fd;
   pfds[s_inputFd].events = POLLIN;
   pfds[s_pipeFd].fd = m_pipeRead;
   pfds[s_pipeFd].events = POLLIN;
+  pfds[s_extraFd].fd = m_extraFd; // poll ignores -1
+  pfds[s_extraFd].events = POLLIN;
 
   int timeout = (msTimeout < 0.0) ? -1 : static_cast<int>(1000.0 * msTimeout);
 
   if (int retval = poll(pfds, s_pollFdCount, timeout); retval > 0) {
-    if (pfds[s_inputFd].revents & POLLIN) {
+    if ((pfds[s_inputFd].revents & POLLIN) || (pfds[s_extraFd].revents & POLLIN)) {
       std::scoped_lock lock{m_mutex};
 
       // Push a data-less system event; EvdevComputer::handleSystemEvent()
