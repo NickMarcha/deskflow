@@ -23,11 +23,9 @@ containers that mount the runtime dir.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import re
-import select
 import signal
 import socket
 import socketserver
@@ -52,13 +50,6 @@ ENV_KEYS = (
 )
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 KEEP_BACKUPS = 20
-# HyperX Cloud III S Wireless dongles (two product ids for the same headset).
-# Protocol from Sapd/HeadsetControl issue 486 and HeyOkay/HaloBattery: a 64-byte
-# output report 0C 02 03 01 00 <cmd>, answered with input report 0C ... <cmd> <value>.
-# On Linux the dongle only answers if the kernel asked for 255 bytes of its
-# configuration descriptor at the first enumeration: usbcore.quirks=03f0:06be:r.
-HYPERX_IDS = ("03F0:000006BE", "03F0:000002CC")
-HEADSET_INTERVAL = 300  # seconds between battery reads
 MAX_BODY = 64 * 1024
 CORE_TIMEOUT = 3.0  # seconds to wait for the server's IPC reply
 KEYS_BAD = re.compile(r"[,():=\s]|[^\x21-\x7e]")
@@ -249,9 +240,6 @@ class App:
         self.identify_file = status_dir / "identify"
         self.batteries_file = self.dir / "webui-batteries.json"
         self.lock = threading.Lock()
-        self.headset_lock = threading.Lock()
-        self.headset_cache: list[dict] = []
-        self.headset_read = 0.0
 
     # reading
 
@@ -590,7 +578,6 @@ class App:
                 "percent": b.get("percent"),
                 "state": b.get("state"),
             })
-        out.extend(self.headsets())
         for ps in sorted(Path("/sys/class/power_supply").glob("*")):
             def attr(name, ps=ps):
                 try:
@@ -610,57 +597,6 @@ class App:
                 "state": (attr("status") or "").lower() or None,
             })
         return out
-
-    @staticmethod
-    def hyperx_query(fd: int, cmd: int) -> int | None:
-        os.write(fd, bytes([0x0C, 0x02, 0x03, 0x01, 0x00, cmd] + [0] * 58))
-        end = time.monotonic() + 1.0
-        while time.monotonic() < end:
-            ready, _, _ = select.select([fd], [], [], 0.1)
-            if ready:
-                data = os.read(fd, 64)
-                if len(data) > 6 and data[0] == 0x0C and data[5] == cmd:
-                    return data[6]
-        return None
-
-    def headsets(self) -> list[dict]:
-        """HyperX Cloud III S batteries, read at most every HEADSET_INTERVAL seconds."""
-        if time.monotonic() - self.headset_read < HEADSET_INTERVAL or not self.headset_lock.acquire(blocking=False):
-            return self.headset_cache
-        try:
-            found = []
-            for node in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
-                uevent = read_text(Path(node) / "device/uevent") or ""
-                if not any(i in uevent.upper() for i in HYPERX_IDS):
-                    continue
-                ports = re.findall(r"/(\d+-[\d.]+)(?=[/:])", os.path.realpath(Path(node) / "device"))
-                port = ports[-1] if ports else os.path.basename(node)
-                entry = {"id": f"hyperx:{port}", "model": "HyperX Cloud III S Wireless",
-                         "where": f"USB port {port}", "percent": None, "state": None}
-                try:
-                    fd = os.open(f"/dev/{os.path.basename(node)}", os.O_RDWR | os.O_NONBLOCK)
-                except OSError:
-                    entry["state"] = "no access"
-                    found.append(entry)
-                    continue
-                try:
-                    level = self.hyperx_query(fd, 0x06)
-                    charging = self.hyperx_query(fd, 0x48)
-                finally:
-                    os.close(fd)
-                if level is None:
-                    entry["state"] = "not answering"
-                elif level > 100:
-                    entry["state"] = "off"
-                else:
-                    entry["percent"] = level
-                    entry["state"] = {0: "discharging", 1: "charging", 2: "full"}.get(charging, "discharging")
-                found.append(entry)
-            self.headset_cache = found
-            self.headset_read = time.monotonic()
-            return found
-        finally:
-            self.headset_lock.release()
 
     def battery_labels(self) -> dict:
         try:
