@@ -213,16 +213,32 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
     <p class="hint">Extra buttons on Logitech devices, like the MX Master's thumb button, can be bound above like any other input. "Acts as" instead makes a button behave as another one inside the mouse itself. The mouse forgets that when it's switched off, and the server sets it again once the mouse is back.</p>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>Device</th><th>Battery</th><th>Button</th><th>Acts as</th></tr></thead>
+        <thead><tr><th>Device</th><th>Button</th><th>Acts as</th></tr></thead>
         <tbody id="hidpp"></tbody>
       </table>
     </div>
-    <div class="notify-row" id="notify-controls"></div>
     <div class="actions">
       <button id="add-binding">Add binding</button>
       <button class="primary" id="save-bindings">Save bindings</button>
       <span class="msg" id="bindings-msg" role="status"></span>
     </div>
+  </section>
+
+  <section id="batteries-section">
+    <h2>Batteries</h2>
+    <p class="hint">Battery levels of wireless devices plugged into this server. Give each one a name, for example the room it's in. Some keyboards only report their level now and then, or when it's low, so a level can stay empty for a long time.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th style="width:28%">Name</th><th>Device</th><th style="width:12%">Level</th><th style="width:16%">State</th></tr></thead>
+        <tbody id="batteries"></tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <button class="primary" id="save-batteries">Save names</button>
+      <span class="msg" id="batteries-msg" role="status"></span>
+    </div>
+    <h3>Notifications</h3>
+    <div id="notify-controls"></div>
   </section>
 
   <section id="computers-section">
@@ -276,7 +292,7 @@ let server = null;          // last /api/state
 let draft = null;           // layout + hotkeys being edited
 let computersDraft = null;
 let inputDraft = null;
-const dirty = { layout: false, computers: false, input: false, bindings: false };
+const dirty = { layout: false, computers: false, input: false, bindings: false, batteries: false };
 let selected = null;        // computer picked by click, waiting for a cell
 
 function el(tag, attrs = {}, ...children) {
@@ -336,18 +352,21 @@ function renderSummary() {
     if (status?.active && status.active !== primary) add("Cursor on", status.active);
     else if (clients.length === 0) add("", "waiting for a client");
     if (!status) add("", "no status file, check DESKFLOW_STATUS_DIR", "low");
-    for (const d of status?.hidpp || []) {
-      if (d.battery) add(d.device, `${d.battery.percent} %${d.battery.state === "discharging" ? "" : `, ${d.battery.state}`}`, isLow(d.battery) ? "low" : "");
+    for (const b of server.batteries || []) {
+      if (b.percent == null) continue;
+      add(batteryName(b), `${b.percent} %${b.state && b.state !== "discharging" ? `, ${b.state}` : ""}`, isLow(b) ? "low" : "");
     }
   }
   document.getElementById("summary-items").replaceChildren(...items);
 }
 
-// --- battery notifications (this browser only) ---------------------------------------
+// --- batteries and their notifications (notifications: this browser only) -----------
 
 const NOTIFY_KEY = "dfh.notify";
 const THRESHOLD_KEY = "dfh.batteryThreshold";
-const NOTIFIED_KEY = "dfh.batteryNotified";
+const FULL_KEY = "dfh.notifyFull";
+const FULL_LIMIT_KEY = "dfh.fullLimit";
+const NOTIFIED_KEY = "dfh.batteryNotified2";
 const FAVICON = document.querySelector('link[rel="icon"]').href;
 
 function load(key, fallback) {
@@ -359,60 +378,122 @@ function load(key, fallback) {
 function store(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ }
 }
-const threshold = () => Math.min(50, Math.max(5, Number(load(THRESHOLD_KEY, 15)) || 15));
-const isLow = (b) => b && b.state === "discharging" && b.percent <= threshold();
+const clamp = (v, lo, hi, fallback) => Math.min(hi, Math.max(lo, Number(v) || fallback));
+const threshold = () => clamp(load(THRESHOLD_KEY, 15), 5, 95, 15);
+const fullLimit = () => clamp(load(FULL_LIMIT_KEY, 100), 50, 100, 100);
+const hasLevel = (b) => b && b.percent != null;
+const isLow = (b) => hasLevel(b) && b.state === "discharging" && b.percent <= threshold();
+const isCharged = (b) => hasLevel(b) && b.state && b.state !== "discharging" && b.percent >= fullLimit();
+const batteryName = (b) => (server.batteryLabels || {})[b.id] || b.model;
 
 function notificationsUsable() {
   return typeof Notification !== "undefined" && window.isSecureContext;
 }
 
+function notify(title, body, tag) {
+  new Notification(title, { body, icon: FAVICON, tag });
+}
+
 function checkBatteries() {
-  if (!load(NOTIFY_KEY, false) || !notificationsUsable() || Notification.permission !== "granted") return;
+  if (!notificationsUsable() || Notification.permission !== "granted") return;
+  const lowOn = load(NOTIFY_KEY, false);
+  const fullOn = load(FULL_KEY, false);
   const notified = load(NOTIFIED_KEY, {});
-  for (const d of server.status?.hidpp || []) {
-    const b = d.battery;
-    if (!b) continue;
-    const was = notified[d.device] || "none";
-    let now = was;
-    if (b.state !== "discharging" || b.percent > threshold() + 5) now = "none";
-    else if (b.percent <= 5) now = "critical";
-    else if (b.percent <= threshold() && was === "none") now = "low";
-    if (now !== was && now !== "none") {
-      new Notification(`${d.device}: battery at ${b.percent} %`, {
-        body: now === "critical" ? "Almost empty. Charge it now." : "Charge it soon.",
-        icon: FAVICON,
-        tag: `battery-${d.device}`,
-      });
+  for (const b of server.batteries || []) {
+    if (!hasLevel(b)) continue;
+    const name = batteryName(b);
+    const st = notified[b.id] || { low: "none", full: false };
+    // low: once at the threshold, once more at 5 %, re-armed after charging
+    let low = st.low;
+    if (b.state !== "discharging" || b.percent > threshold() + 5) low = "none";
+    else if (b.percent <= 5) low = "critical";
+    else if (b.percent <= threshold() && low === "none") low = "low";
+    if (lowOn && low !== st.low && low !== "none") {
+      notify(`${name}: battery at ${b.percent} %`, low === "critical" ? "Almost empty. Charge it now." : "Charge it soon.", `battery-low-${b.id}`);
     }
-    notified[d.device] = now;
+    // charged: once when it reaches the limit while charging, re-armed when it drops below
+    let full = st.full;
+    if (b.state === "discharging" || b.percent < fullLimit() - 5) full = false;
+    else if (isCharged(b) && !full) {
+      full = true;
+      if (fullOn) notify(`${name}: charged to ${b.percent} %`, fullLimit() < 100 ? "You can unplug it now." : "Fully charged.", `battery-full-${b.id}`);
+    }
+    notified[b.id] = { low, full };
   }
   store(NOTIFIED_KEY, notified);
+}
+
+let batteryNamesDraft = null;
+
+function resetBatteryNames() {
+  batteryNamesDraft = { ...(server.batteryLabels || {}) };
+  dirty.batteries = false;
+  renderBatteries();
+}
+
+function renderBatteries() {
+  const body = document.getElementById("batteries");
+  body.replaceChildren();
+  const list = server.batteries || [];
+  if (!list.length) {
+    body.append(el("tr", {}, el("td", { colspan: "4", class: "msg" }, "No battery-powered devices found.")));
+    return;
+  }
+  for (const b of list) {
+    const level = hasLevel(b) ? el("span", { class: isLow(b) ? "low" : "" }, `${b.percent} %`) : el("span", { class: "msg" }, "no report yet");
+    body.append(el("tr", {},
+      el("td", {}, el("input", { value: batteryNamesDraft[b.id] || "", placeholder: b.model, maxlength: "40", "aria-label": `Name for ${b.model}`,
+        oninput: (e) => { batteryNamesDraft[b.id] = e.target.value; dirty.batteries = true; setMsg("batteries-msg", "Unsaved changes"); } })),
+      el("td", {}, b.model, el("span", { class: "msg" }, ` · ${b.where}`)),
+      el("td", {}, level),
+      el("td", {}, b.state || ""),
+    ));
+  }
+}
+
+async function saveBatteryNames() {
+  setMsg("batteries-msg", "Saving…");
+  try {
+    const res = await api("/api/batteries", { labels: batteryNamesDraft });
+    await refresh();
+    resetBatteryNames();
+    setMsg("batteries-msg", `Saved: ${res.note}`);
+  } catch (e) {
+    setMsg("batteries-msg", e.message, true);
+  }
 }
 
 function renderNotifyControls() {
   const box = document.getElementById("notify-controls");
   const msg = (text) => el("span", { class: "msg" }, text);
   box.replaceChildren();
-  const toggle = el("input", { type: "checkbox", checked: load(NOTIFY_KEY, false), onchange: async (e) => {
-    if (e.target.checked && notificationsUsable() && Notification.permission === "default") {
+  const ask = async (key, on) => {
+    if (on && notificationsUsable() && Notification.permission === "default") {
       await Notification.requestPermission();
     }
-    store(NOTIFY_KEY, e.target.checked);
+    store(key, on);
     renderNotifyControls();
     checkBatteries();
-  } });
-  const level = el("input", { type: "number", min: "5", max: "50", value: String(threshold()), "aria-label": "Warn at percent",
-    onchange: (e) => { store(THRESHOLD_KEY, Number(e.target.value)); renderSummary(); renderHidpp(); } });
+  };
+  const lowToggle = el("input", { type: "checkbox", checked: load(NOTIFY_KEY, false), onchange: (e) => ask(NOTIFY_KEY, e.target.checked) });
+  const lowLevel = el("input", { type: "number", min: "5", max: "95", value: String(threshold()), "aria-label": "Warn when low at percent",
+    onchange: (e) => { store(THRESHOLD_KEY, Number(e.target.value)); renderSummary(); renderBatteries(); } });
+  const fullToggle = el("input", { type: "checkbox", checked: load(FULL_KEY, false), onchange: (e) => ask(FULL_KEY, e.target.checked) });
+  const fullLevel = el("input", { type: "number", min: "50", max: "100", value: String(fullLimit()), "aria-label": "Notify when charged to percent",
+    onchange: (e) => { store(FULL_LIMIT_KEY, Number(e.target.value)); } });
   box.append(
-    el("label", {}, toggle, "Desktop notification when a battery runs low"),
-    el("label", {}, "at", level, "%"),
+    el("div", { class: "notify-row" },
+      el("label", {}, lowToggle, "Notify me when a battery runs low, at"), el("label", {}, lowLevel, "%")),
+    el("div", { class: "notify-row" },
+      el("label", {}, fullToggle, "Notify me when a battery has charged to"), el("label", {}, fullLevel, "%"),
+      msg("A limit below 100 % helps if you unplug early to spare the battery.")),
   );
   if (!notificationsUsable()) {
-    box.append(msg("Notifications need HTTPS, so this browser can't show them here."));
+    box.append(el("p", { class: "msg" }, "Notifications need HTTPS, so this browser can't show them here."));
   } else if (Notification.permission === "denied") {
-    box.append(msg("Notifications are blocked for this site in the browser settings."));
-  } else if (load(NOTIFY_KEY, false) && Notification.permission === "granted") {
-    box.append(el("button", { onclick: () => new Notification("Deskflow Headless", { body: "Battery warnings will look like this.", icon: FAVICON }) }, "Send a test notification"));
+    box.append(el("p", { class: "msg" }, "Notifications are blocked for this site in the browser settings."));
+  } else if ((load(NOTIFY_KEY, false) || load(FULL_KEY, false)) && Notification.permission === "granted") {
+    box.append(el("div", { class: "actions" }, el("button", { onclick: () => notify("Deskflow Headless", "Battery notifications will look like this.", "test") }, "Send a test notification")));
   }
 }
 
@@ -742,14 +823,13 @@ function renderHidpp() {
   body.replaceChildren();
   const devices = server.status?.hidpp || [];
   if (!devices.length) {
-    body.append(el("tr", {}, el("td", { colspan: "4", class: "msg" }, "No Logitech HID++ devices found, or the server can't open the receiver.")));
+    body.append(el("tr", {}, el("td", { colspan: "3", class: "msg" }, "No Logitech HID++ devices found, or the server can't open the receiver.")));
     return;
   }
   for (const d of devices) {
-    const battery = d.battery ? el("span", { class: isLow(d.battery) ? "low" : "" }, `${d.battery.percent} %, ${d.battery.state}`) : "unknown";
     const extras = (d.controls || []).filter((c) => c.targets?.length && ![0x50, 0x51].includes(c.cid));
     if (!extras.length) {
-      body.append(el("tr", {}, el("td", {}, d.device), el("td", {}, battery), el("td", { colspan: "2", class: "msg" }, "no remappable buttons")));
+      body.append(el("tr", {}, el("td", {}, d.device), el("td", { colspan: "2", class: "msg" }, "no remappable buttons")));
       continue;
     }
     extras.forEach((c, i) => {
@@ -764,7 +844,6 @@ function renderHidpp() {
         c.targets.map((t) => el("option", { value: String(t), selected: current?.to === t }, controlName(t))));
       body.append(el("tr", {},
         el("td", {}, i === 0 ? d.device : ""),
-        el("td", {}, i === 0 ? battery : ""),
         el("td", {}, controlName(c.cid)),
         el("td", {}, select)));
     });
@@ -928,6 +1007,7 @@ async function tick() {
     if (first || (!dirty.bindings && !capture && !editing("bindings-section"))) resetBindingsDraft();
     if (first || (!dirty.computers && !editing("computers-section"))) resetComputersDraft();
     if (first || (!dirty.input && !editing("input-fields"))) resetInputDraft();
+    if (first || (!dirty.batteries && !editing("batteries"))) resetBatteryNames(); else renderBatteries();
     renderDevices();
     checkBatteries();
   } catch (e) {
@@ -950,7 +1030,8 @@ document.getElementById("add-computer").addEventListener("click", () => {
 });
 document.getElementById("save-computers").addEventListener("click", saveComputers);
 document.getElementById("add-binding").addEventListener("click", startCapture);
-document.getElementById("save-bindings").addEventListener("click", saveBindings);document.getElementById("save-input").addEventListener("click", saveInput);
+document.getElementById("save-bindings").addEventListener("click", saveBindings);
+document.getElementById("save-batteries").addEventListener("click", saveBatteryNames);document.getElementById("save-input").addEventListener("click", saveInput);
 document.addEventListener("click", (e) => {
   if (selected && !e.target.closest(".cell, #tray")) { selected = null; renderLayout(); }
 });
