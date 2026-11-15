@@ -139,6 +139,16 @@ int main(int argc, char **argv)
   QObject::connect(
       ipcServer, &deskflow::core::ipc::IpcServer::stopProcessRequested, coreApp, &App::quit, Qt::DirectConnection
   );
+  if (parser.serverMode()) {
+    auto *serverApp = static_cast<ServerApp *>(coreApp);
+    QObject::connect(
+        ipcServer, &deskflow::core::ipc::CoreIpcServer::keystrokeRequested, ipcServer,
+        [serverApp](const QString &keystroke, const deskflow::core::ipc::CoreIpcServer::KeystrokeReply &reply) {
+          serverApp->requestKeystroke(keystroke.toStdString(), reply);
+        },
+        Qt::DirectConnection
+    );
+  }
   ipcServer->listen();
 
   QThread coreThread;

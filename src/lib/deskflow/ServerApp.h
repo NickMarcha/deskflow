@@ -14,6 +14,7 @@
 #include "net/NetworkAddress.h"
 #include "server/Config.h"
 
+#include <functional>
 #include <memory>
 
 enum class ServerState
@@ -83,6 +84,7 @@ public:
   PrimaryClient *openPrimaryClient(const std::string &name, deskflow::Computer *computer);
   void handleSuspend();
   void handleResume();
+  void requestKeystroke(const std::string &keystroke, std::function<void(const QString &error)> reply);
   ClientListener *openClientListener(const NetworkAddress &address);
   Server *openServer(ServerConfig &config, PrimaryClient *primaryClient);
   bool startServer();
@@ -103,6 +105,7 @@ public:
 
 private:
   void handleComputerSwitched() const;
+  QString sendKeystroke(const std::string &keystroke);
   std::unique_ptr<ISocketFactory> getSocketFactory() const;
   NetworkAddress getAddress(const NetworkAddress &address) const;
 

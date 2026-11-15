@@ -57,6 +57,22 @@
 
 using namespace deskflow::server;
 
+namespace {
+class KeystrokeRequest : public EventData
+{
+public:
+  KeystrokeRequest(const std::string &keystroke, std::function<void(const QString &)> reply)
+      : m_keystroke(keystroke),
+        m_reply(std::move(reply))
+  {
+    // do nothing
+  }
+
+  std::string m_keystroke;
+  std::function<void(const QString &)> m_reply;
+};
+} // namespace
+
 //
 // ServerApp
 //
@@ -87,6 +103,44 @@ void ServerApp::reloadSignalHandler(Arch::ThreadSignal, void *)
 {
   IEventQueue *events = App::instance().getEvents();
   events->addEvent(Event(EventTypes::ServerAppReloadConfig, events->getSystemTarget()));
+}
+
+void ServerApp::requestKeystroke(const std::string &keystroke, std::function<void(const QString &error)> reply)
+{
+  IEventQueue *events = getEvents();
+  events->addEvent(
+      Event(EventTypes::ServerAppKeystroke, events->getSystemTarget(), new KeystrokeRequest(keystroke, std::move(reply)))
+  );
+}
+
+QString ServerApp::sendKeystroke(const std::string &keystroke)
+{
+  if (m_server == nullptr) {
+    return QStringLiteral("the server is not running");
+  }
+
+  IPlatformComputer::KeyInfo *info = nullptr;
+  try {
+    info = m_config->parseKeystrokeAction(keystroke);
+  } catch (const ServerConfigReadException &e) {
+    // drop the "read error: line N: " prefix, there is no file
+    std::string error = e.what();
+    if (const auto line = error.find("line "); line != std::string::npos) {
+      if (const auto colon = error.find(": ", line); colon != std::string::npos) {
+        error.erase(0, colon + 2);
+      }
+    }
+    return QString::fromStdString(error);
+  }
+
+  // same path as a keystroke() action in the config
+  InputFilter::KeystrokeAction press(getEvents(), IKeyState::KeyInfo::alloc(*info), true);
+  InputFilter::KeystrokeAction release(getEvents(), info, false);
+  const Event event(EventTypes::Unknown, m_config->getInputFilter());
+  press.perform(event);
+  release.perform(event);
+  LOG_INFO("sent keystroke from ipc: %s", keystroke.c_str());
+  return {};
 }
 
 void ServerApp::reloadConfig()
@@ -568,6 +622,11 @@ int ServerApp::mainLoop()
     resetServer();
   });
 
+  getEvents()->addHandler(EventTypes::ServerAppKeystroke, getEvents()->getSystemTarget(), [this](const auto &e) {
+    const auto *request = static_cast<KeystrokeRequest *>(e.getDataObject());
+    request->m_reply(sendKeystroke(request->m_keystroke));
+  });
+
   // run event loop.  if startServer() failed we're supposed to retry
   // later.  the timer installed by startServer() will take care of
   // that.
@@ -577,6 +636,7 @@ int ServerApp::mainLoop()
   LOG_DEBUG("stopping server");
   getEvents()->removeHandler(EventTypes::ServerAppForceReconnect, getEvents()->getSystemTarget());
   getEvents()->removeHandler(EventTypes::ServerAppReloadConfig, getEvents()->getSystemTarget());
+  getEvents()->removeHandler(EventTypes::ServerAppKeystroke, getEvents()->getSystemTarget());
   cleanupServer();
   LOG_INFO("stopped server");
 

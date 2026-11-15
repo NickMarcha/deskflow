@@ -7,7 +7,11 @@
 
 #include "ServerConfigTests.h"
 
+#include "deskflow/KeyTypes.h"
 #include "server/Config.h"
+
+#include <cstdlib>
+#include <memory>
 
 class OnlySystemFilter : public InputFilter::Condition
 {
@@ -159,6 +163,44 @@ void ServerConfigTests::equalityCheck_diff_neighbours3()
   QVERIFY(b.addComputer("computerC"));
   QVERIFY(b.connect("computerA", Direction::Bottom, 0.0f, 0.5f, "computerC", 0.5f, 1.0f));
   QVERIFY(a != b);
+}
+
+void ServerConfigTests::parseKeystrokeAction()
+{
+  Config config(nullptr);
+  QVERIFY(config.addComputer("computerA"));
+  QVERIFY(config.addComputer("computerB"));
+  QVERIFY(config.addComputer("computerC"));
+  QVERIFY(config.addAlias("computerB", "aliasB"));
+
+  using KeyInfoPtr = std::unique_ptr<IPlatformComputer::KeyInfo, decltype(&free)>;
+
+  KeyInfoPtr active(config.parseKeystrokeAction("Control+Shift+Alt+M"), &free);
+  QCOMPARE(active->m_key, static_cast<KeyID>('M'));
+  QCOMPARE(active->m_mask, static_cast<KeyModifierMask>(KeyModifierControl | KeyModifierShift | KeyModifierAlt));
+  QVERIFY(IKeyState::KeyInfo::isDefault(active->m_computers.c_str()));
+
+  KeyInfoPtr named(config.parseKeystrokeAction("Control+F8, computerA:aliasB"), &free);
+  QCOMPARE(named->m_key, kKeyF8);
+  QVERIFY(IKeyState::KeyInfo::contains(named->m_computers.c_str(), "computerA"));
+  QVERIFY(IKeyState::KeyInfo::contains(named->m_computers.c_str(), "computerB"));
+  QVERIFY(!IKeyState::KeyInfo::contains(named->m_computers.c_str(), "computerC"));
+
+  KeyInfoPtr all(config.parseKeystrokeAction("Alt+M,*"), &free);
+  QVERIFY(IKeyState::KeyInfo::contains(all->m_computers.c_str(), "computerC"));
+}
+
+void ServerConfigTests::parseKeystrokeAction_errors()
+{
+  Config config(nullptr);
+  QVERIFY(config.addComputer("computerA"));
+
+  QVERIFY_THROWS_EXCEPTION(ServerConfigReadException, config.parseKeystrokeAction(""));
+  QVERIFY_THROWS_EXCEPTION(ServerConfigReadException, config.parseKeystrokeAction("Control+Bogus"));
+  QVERIFY_THROWS_EXCEPTION(ServerConfigReadException, config.parseKeystrokeAction("Bogus+M"));
+  QVERIFY_THROWS_EXCEPTION(ServerConfigReadException, config.parseKeystrokeAction("Control+M,nobody"));
+  QVERIFY_THROWS_EXCEPTION(ServerConfigReadException, config.parseKeystrokeAction("Control+M,computerA,x"));
+  QVERIFY_THROWS_EXCEPTION(ServerConfigReadException, config.parseKeystrokeAction("Control+M) = switchToComputer(computerA"));
 }
 
 QTEST_MAIN(ServerConfigTests)
