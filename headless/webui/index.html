@@ -1,0 +1,605 @@
+<!doctype html>
+<!-- SPDX-FileCopyrightText: (C) 2026 Deskflow Developers -->
+<!-- SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deskflow headless</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --border: #dcdcd7;
+  --text: #1c1c1a;
+  --muted: #62625d;
+  --accent: #0f766e;
+  --accent-text: #ffffff;
+  --danger: #b4232c;
+  --cell: #efefeb;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --border: #2e2e2e;
+    --text: #f0f0f0;
+    --muted: #a0a0a0;
+    --accent: #00d4aa;
+    --accent-text: #08110f;
+    --danger: #ff6b6b;
+    --cell: #151515;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f0f0f; --surface: #1a1a1a; --border: #2e2e2e; --text: #f0f0f0; --muted: #a0a0a0;
+  --accent: #00d4aa; --accent-text: #08110f; --danger: #ff6b6b; --cell: #151515; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 "IBM Plex Sans", sans-serif;
+}
+code, .mono, input.mono { font-family: "IBM Plex Mono", monospace; font-size: 13px; }
+header {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+header .wrap { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding-top: 14px; padding-bottom: 14px; }
+h1 { font-size: 18px; font-weight: 600; margin: 0; }
+#summary { color: var(--muted); }
+main section { padding: 24px 0; border-bottom: 1px solid var(--border); }
+main section:last-child { border-bottom: 0; }
+h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+h3 { font-size: 15px; font-weight: 600; margin: 20px 0 8px; }
+p.hint { color: var(--muted); margin: 0 0 12px; max-width: 70ch; }
+
+#grid {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.cell {
+  aspect-ratio: 16 / 10;
+  background: var(--cell);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  min-width: 0;
+  display: flex;
+}
+.cell.target { border-color: var(--accent); border-style: solid; }
+.computer {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: grab;
+  user-select: none;
+  overflow: hidden;
+}
+.computer .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.computer .meta { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.computer.active { border: 2px solid var(--accent); }
+.computer.offline .name { color: var(--muted); }
+.computer.selected { outline: 2px solid var(--text); outline-offset: 1px; }
+#tray { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 36px; color: var(--muted); }
+#tray .computer { flex: 0 0 140px; }
+
+table { border-collapse: collapse; width: 100%; }
+.table-scroll { overflow-x: auto; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+th { font-weight: 500; color: var(--muted); font-size: 13px; }
+td input, td select { width: 100%; }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  min-width: 0;
+}
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+textarea { width: 100%; min-height: 70px; font-family: "IBM Plex Mono", monospace; font-size: 13px; }
+label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px 16px; margin-top: 12px; }
+.fields input { width: 100%; }
+
+button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+button:hover { background: var(--cell); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 500; }
+button.primary:hover { filter: brightness(1.08); }
+button:disabled { opacity: 0.5; cursor: default; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+.msg { white-space: pre-wrap; color: var(--muted); }
+.msg.error { color: var(--danger); }
+.state-used { color: var(--accent); }
+.state-error { color: var(--danger); }
+details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
+@media (max-width: 600px) {
+  .computer { padding: 3px 5px; }
+  .computer .meta { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1 id="title">Deskflow headless</h1>
+    <span id="summary">Loading…</span>
+  </div>
+</header>
+<main class="wrap">
+  <section id="layout">
+    <h2>Layout</h2>
+    <p class="hint">Drag a computer onto a cell, or click it and then click a cell. Computers in neighbouring cells are linked, and the cursor crosses the edge they share.</p>
+    <div id="grid"></div>
+    <div id="tray"></div>
+
+    <h3>Hotkeys</h3>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th style="width:32%">Keys</th><th style="width:28%">Action</th><th>Details</th><th style="width:1%"></th></tr></thead>
+        <tbody id="hotkeys"></tbody>
+      </table>
+    </div>
+    <div class="actions"><button id="add-hotkey">Add hotkey</button></div>
+    <details>
+      <summary>Other server options</summary>
+      <p class="hint">Lines from the options section that aren't hotkeys, one per line, in Deskflow's config syntax.</p>
+      <textarea id="other-options" spellcheck="false"></textarea>
+    </details>
+
+    <div class="actions">
+      <button class="primary" id="save-layout">Save layout and hotkeys</button>
+      <button id="discard-layout">Discard changes</button>
+      <span class="msg" id="layout-msg" role="status"></span>
+    </div>
+  </section>
+
+  <section id="computers-section">
+    <h2>Computers</h2>
+    <p class="hint">The names clients connect with. Aliases let a client whose own name differs (its hostname, say) still match. Saving restarts the server, and clients reconnect within a few seconds.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th style="width:30%">Name</th><th>Aliases, comma separated</th><th style="width:16%">Status</th><th style="width:1%"></th></tr></thead>
+        <tbody id="computers"></tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <button id="add-computer">Add computer</button>
+      <button class="primary" id="save-computers">Save computers</button>
+      <span class="msg" id="computers-msg" role="status"></span>
+    </div>
+  </section>
+
+  <section id="input-section">
+    <h2>Input devices</h2>
+    <p class="hint">Everything plugged into this server. Only keyboards and mice are used; other devices, such as headset buttons, are skipped. Saving restarts the server.</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Device</th><th>Node</th><th>Type</th><th>State</th><th style="width:1%"></th></tr></thead>
+        <tbody id="devices"></tbody>
+      </table>
+    </div>
+    <div class="fields" id="input-fields"></div>
+    <div class="actions">
+      <button class="primary" id="save-input">Save input settings</button>
+      <span class="msg" id="input-msg" role="status"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const INPUT_FIELDS = [
+  ["DESKFLOW_EVDEV_MATCH", "Only use devices whose name contains", "all devices", "Comma separated"],
+  ["DESKFLOW_EVDEV_IGNORE", "Ignore devices whose name contains", "none", "Comma separated"],
+  ["DESKFLOW_EVDEV_REPEAT", "Key repeat (delay ms, rate Hz)", "500,30"],
+  ["DESKFLOW_EVDEV_ACCEL", "Pointer speed (-1 to 1)", "0"],
+  ["XKB_DEFAULT_LAYOUT", "Keyboard layout", "us"],
+  ["DESKFLOW_EVDEV_SHAPE", "Virtual screen size", "1920x1080"],
+];
+const STATE_TEXT = { used: "In use", filtered: "Ignored", skipped: "Not a keyboard or mouse", error: "Can't open" };
+const KIND_TEXT = { keyboard: "Keyboard", pointer: "Mouse", "keyboard+pointer": "Keyboard and mouse", keys: "Extra keys", other: "Other" };
+
+let server = null;          // last /api/state
+let draft = null;           // layout + hotkeys being edited
+let computersDraft = null;
+let inputDraft = null;
+const dirty = { layout: false, computers: false, input: false };
+let selected = null;        // computer picked by click, waiting for a cell
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v === true) node.setAttribute(k, "");
+    else if (v !== false && v != null) node.setAttribute(k, v);
+  }
+  for (const c of children.flat()) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return node;
+}
+
+async function api(path, body) {
+  const opts = body === undefined ? {} : {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Deskflow-Webui": "1" },
+    body: JSON.stringify(body),
+  };
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+function setMsg(id, text, isError = false) {
+  const node = document.getElementById(id);
+  node.textContent = text;
+  node.classList.toggle("error", isError);
+}
+
+// --- live state ---------------------------------------------------------------
+
+function clientInfo(name) {
+  const clients = server?.status?.clients || [];
+  return clients.find((c) => c.name === name) || null;
+}
+
+function isRunning() {
+  return server?.service?.ActiveState === "active";
+}
+
+function renderSummary() {
+  const status = server.status;
+  const primary = server.primary || "server";
+  document.getElementById("title").textContent = `Deskflow on ${primary}`;
+  document.title = `Deskflow on ${primary}`;
+  const parts = [];
+  if (!isRunning()) {
+    parts.push(`Server is ${server.service?.ActiveState || "not running"}`);
+  } else {
+    const clients = status?.clients || [];
+    const total = server.computers.filter((c) => c.name !== primary).length;
+    parts.push(`${clients.length} of ${total} computers connected`);
+    if (status?.active && status.active !== primary) parts.push(`cursor on ${status.active}`);
+    else if (clients.length === 0) parts.push("waiting for a client");
+    if (!status) parts.push("no status file (is DESKFLOW_STATUS_DIR set?)");
+  }
+  document.getElementById("summary").textContent = parts.join(" · ");
+}
+
+// --- layout -------------------------------------------------------------------
+
+function parseOption(line) {
+  const m = /^keystroke\((.+?)\)\s*=\s*(.+)$/.exec(line);
+  if (!m) return null;
+  const keys = m[1].trim();
+  const action = m[2].trim();
+  const sw = /^switchToScreen\(([^)]+)\)$/.exec(action);
+  if (sw) return { keys, kind: "switch", target: sw[1].trim(), custom: "" };
+  if (action === "switchToNextScreen") return { keys, kind: "next", target: "", custom: "" };
+  if (action === "lockCursorToScreen(toggle)") return { keys, kind: "lock", target: "", custom: "" };
+  return { keys, kind: "custom", target: "", custom: action };
+}
+
+function hotkeyLine(h) {
+  const action = { switch: `switchToScreen(${h.target})`, next: "switchToNextScreen", lock: "lockCursorToScreen(toggle)" }[h.kind] ?? h.custom;
+  return `keystroke(${h.keys.trim()}) = ${action.trim()}`;
+}
+
+function resetLayoutDraft() {
+  const hotkeys = [];
+  const other = [];
+  for (const line of server.options) {
+    const h = parseOption(line);
+    if (h) hotkeys.push(h); else other.push(line);
+  }
+  draft = { cells: structuredClone(server.cells), hotkeys, other: other.join("\n") };
+  dirty.layout = false;
+  selected = null;
+  renderLayout();
+  renderHotkeys();
+  document.getElementById("other-options").value = draft.other;
+}
+
+function markLayoutDirty() {
+  dirty.layout = true;
+  setMsg("layout-msg", "Unsaved changes");
+}
+
+function placeComputer(name, pos) {
+  const occupant = Object.entries(draft.cells).find(([, p]) => pos && p[0] === pos[0] && p[1] === pos[1]);
+  const from = draft.cells[name];
+  if (occupant && occupant[0] !== name) {
+    // swap, or send the occupant to the tray when the dragged one came from the tray
+    if (from) draft.cells[occupant[0]] = from; else delete draft.cells[occupant[0]];
+  }
+  if (pos) draft.cells[name] = pos; else delete draft.cells[name];
+  selected = null;
+  markLayoutDirty();
+  renderLayout();
+}
+
+function computerCard(name) {
+  const info = clientInfo(name);
+  const active = server.status?.active === name;
+  const meta = info ? (active ? "cursor here" : (info.width ? `${info.width}×${info.height}` : "connected")) : "offline";
+  const card = el("div", {
+    class: `computer${active ? " active" : ""}${info ? "" : " offline"}${selected === name ? " selected" : ""}`,
+    draggable: "true",
+    title: name,
+    ondragstart: (e) => { e.dataTransfer.setData("text/plain", name); e.dataTransfer.effectAllowed = "move"; },
+    onclick: (e) => { e.stopPropagation(); selected = selected === name ? null : name; renderLayout(); },
+  }, el("div", { class: "name" }, name), el("div", { class: "meta" }, meta));
+  return card;
+}
+
+function dropTarget(node, pos) {
+  node.addEventListener("dragover", (e) => { e.preventDefault(); node.classList.add("target"); });
+  node.addEventListener("dragleave", () => node.classList.remove("target"));
+  node.addEventListener("drop", (e) => {
+    e.preventDefault();
+    node.classList.remove("target");
+    const name = e.dataTransfer.getData("text/plain");
+    if (name) placeComputer(name, pos);
+  });
+  node.addEventListener("click", () => { if (selected) placeComputer(selected, pos); });
+}
+
+function renderLayout() {
+  const names = server.computers.map((c) => c.name).filter((n) => n !== server.primary);
+  const positions = Object.values(draft.cells);
+  const cols = Math.max(5, ...positions.map((p) => p[0] + 2));
+  const rows = Math.max(3, ...positions.map((p) => p[1] + 2));
+  const grid = document.getElementById("grid");
+  grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  grid.replaceChildren();
+  const byPos = new Map(Object.entries(draft.cells).map(([n, p]) => [`${p[0]},${p[1]}`, n]));
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = el("div", { class: "cell" });
+      const name = byPos.get(`${c},${r}`);
+      if (name) cell.append(computerCard(name));
+      dropTarget(cell, [c, r]);
+      grid.append(cell);
+    }
+  }
+  const tray = document.getElementById("tray");
+  tray.replaceChildren();
+  const unplaced = names.filter((n) => !draft.cells[n]);
+  tray.append(el("span", {}, unplaced.length ? "Not placed (reachable by hotkey only):" : "Drop here to take a computer off the grid."));
+  for (const n of unplaced) tray.append(computerCard(n));
+  dropTarget(tray, null);
+}
+
+function renderHotkeys() {
+  const names = server.computers.map((c) => c.name).filter((n) => n !== server.primary);
+  const body = document.getElementById("hotkeys");
+  body.replaceChildren();
+  draft.hotkeys.forEach((h, i) => {
+    const details = h.kind === "switch"
+      ? el("select", { onchange: (e) => { h.target = e.target.value; markLayoutDirty(); } },
+          (names.includes(h.target) || !h.target ? names : [h.target, ...names]).map((n) => el("option", { value: n, selected: n === h.target }, n)))
+      : h.kind === "custom"
+        ? el("input", { class: "mono", value: h.custom, spellcheck: "false", "aria-label": "Action",
+            oninput: (e) => { h.custom = e.target.value; markLayoutDirty(); } })
+        : el("span", { class: "msg" }, h.kind === "next" ? "Cycles through connected computers" : "Keeps the cursor on the current computer until pressed again");
+    const kind = el("select", { "aria-label": "Action", onchange: (e) => {
+      h.kind = e.target.value;
+      if (h.kind === "switch" && !h.target) h.target = names[0] || "";
+      markLayoutDirty();
+      renderHotkeys();
+    } },
+      [["switch", "Switch to computer"], ["next", "Next computer"], ["lock", "Lock cursor (toggle)"], ["custom", "Custom action"]]
+        .map(([v, t]) => el("option", { value: v, selected: v === h.kind }, t)));
+    body.append(el("tr", {},
+      el("td", {}, el("input", { class: "mono", value: h.keys, placeholder: "Control+Alt+F12", spellcheck: "false", "aria-label": "Keys",
+        oninput: (e) => { h.keys = e.target.value; markLayoutDirty(); } })),
+      el("td", {}, kind),
+      el("td", {}, details),
+      el("td", {}, el("button", { onclick: () => { draft.hotkeys.splice(i, 1); markLayoutDirty(); renderHotkeys(); } }, "Remove")),
+    ));
+  });
+}
+
+async function saveLayout() {
+  const bad = draft.hotkeys.find((h) => !h.keys.trim() || (h.kind === "custom" && !h.custom.trim()));
+  if (bad) return setMsg("layout-msg", "Every hotkey needs keys and an action.", true);
+  const options = [...draft.hotkeys.map(hotkeyLine), ...draft.other.split("\n").map((l) => l.trim()).filter(Boolean)];
+  setMsg("layout-msg", "Saving…");
+  try {
+    const res = await api("/api/layout", { cells: draft.cells, options });
+    await refresh();
+    resetLayoutDraft();
+    setMsg("layout-msg", `Saved: ${res.note}`);
+  } catch (e) {
+    setMsg("layout-msg", e.message, true);
+  }
+}
+
+// --- computers ------------------------------------------------------------------
+
+function resetComputersDraft() {
+  computersDraft = server.computers.filter((c) => c.name !== server.primary)
+    .map((c) => ({ name: c.name, aliases: c.aliases.join(", ") }));
+  dirty.computers = false;
+  renderComputers();
+}
+
+function renderComputers() {
+  const body = document.getElementById("computers");
+  body.replaceChildren(el("tr", {},
+    el("td", {}, el("strong", {}, server.primary)),
+    el("td", { class: "msg" }, "This server. Never gets the cursor."),
+    el("td", {}, isRunning() ? "running" : "stopped"),
+    el("td", {})));
+  computersDraft.forEach((c, i) => {
+    const mark = () => { dirty.computers = true; setMsg("computers-msg", "Unsaved changes"); };
+    body.append(el("tr", {},
+      el("td", {}, el("input", { value: c.name, placeholder: "name", spellcheck: "false", "aria-label": "Name",
+        oninput: (e) => { c.name = e.target.value.trim(); mark(); } })),
+      el("td", {}, el("input", { value: c.aliases, placeholder: "e.g. its hostname", spellcheck: "false", "aria-label": "Aliases",
+        oninput: (e) => { c.aliases = e.target.value; mark(); } })),
+      el("td", {}, clientInfo(c.name) ? "connected" : "offline"),
+      el("td", {}, el("button", { onclick: () => { computersDraft.splice(i, 1); mark(); renderComputers(); } }, "Remove")),
+    ));
+  });
+}
+
+async function saveComputers() {
+  if (!confirm("Saving restarts the server. Keyboard and mouse pause for a few seconds. Continue?")) return;
+  const computers = computersDraft.map((c) => ({
+    name: c.name,
+    aliases: c.aliases.split(",").map((a) => a.trim()).filter(Boolean),
+  }));
+  setMsg("computers-msg", "Saving and restarting…");
+  try {
+    const res = await api("/api/computers", { computers });
+    await refresh();
+    resetComputersDraft();
+    resetLayoutDraft();
+    setMsg("computers-msg", `Saved: ${res.note}`);
+  } catch (e) {
+    setMsg("computers-msg", e.message, true);
+  }
+}
+
+// --- input ------------------------------------------------------------------------
+
+function resetInputDraft() {
+  inputDraft = { ...server.env };
+  dirty.input = false;
+  renderInputFields();
+}
+
+function listOf(value) {
+  return value.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function renderInputFields() {
+  const box = document.getElementById("input-fields");
+  box.replaceChildren();
+  for (const [key, label, placeholder] of INPUT_FIELDS) {
+    const id = `f-${key}`;
+    box.append(el("div", {},
+      el("label", { for: id }, label),
+      el("input", { id, class: "mono", value: inputDraft[key] || "", placeholder, spellcheck: "false",
+        oninput: (e) => { inputDraft[key] = e.target.value; dirty.input = true; setMsg("input-msg", "Unsaved changes"); renderDevices(); } })));
+  }
+}
+
+function renderDevices() {
+  const body = document.getElementById("devices");
+  body.replaceChildren();
+  const devices = server.status?.devices || [];
+  if (!devices.length) {
+    body.append(el("tr", {}, el("td", { colspan: "5", class: "msg" }, "The server hasn't reported any devices.")));
+    return;
+  }
+  const ignored = listOf(inputDraft.DESKFLOW_EVDEV_IGNORE || "");
+  for (const d of devices) {
+    const isIgnored = ignored.some((n) => d.name.includes(n));
+    let button = "";
+    if (d.state === "used" || d.state === "filtered") {
+      button = el("button", { onclick: () => {
+        const list = listOf(inputDraft.DESKFLOW_EVDEV_IGNORE || "");
+        inputDraft.DESKFLOW_EVDEV_IGNORE = (isIgnored ? list.filter((n) => !d.name.includes(n)) : [...list, d.name]).join(", ");
+        dirty.input = true;
+        setMsg("input-msg", "Unsaved changes");
+        renderInputFields();
+        renderDevices();
+      } }, isIgnored ? "Use" : "Ignore");
+    }
+    body.append(el("tr", {},
+      el("td", {}, d.name || "(unnamed)"),
+      el("td", { class: "mono" }, d.path.replace("/dev/input/", "")),
+      el("td", {}, KIND_TEXT[d.kind] || d.kind),
+      el("td", { class: `state-${d.state}` }, STATE_TEXT[d.state] || d.state),
+      el("td", {}, button),
+    ));
+  }
+}
+
+async function saveInput() {
+  if (!confirm("Saving restarts the server. Keyboard and mouse pause for a few seconds. Continue?")) return;
+  setMsg("input-msg", "Saving and restarting…");
+  try {
+    const res = await api("/api/input", inputDraft);
+    await refresh();
+    resetInputDraft();
+    renderDevices();
+    setMsg("input-msg", `Saved: ${res.note}`);
+  } catch (e) {
+    setMsg("input-msg", e.message, true);
+  }
+}
+
+// --- polling ------------------------------------------------------------------------
+
+async function refresh() {
+  server = await api("/api/state");
+  renderSummary();
+}
+
+async function tick() {
+  try {
+    const first = server === null;
+    await refresh();
+    // never rebuild a section while someone is in one of its fields
+    const editing = (id) => document.getElementById(id).contains(document.activeElement);
+    if (first || (!dirty.layout && !selected && !editing("layout"))) resetLayoutDraft(); else renderLayout();
+    if (first || (!dirty.computers && !editing("computers-section"))) resetComputersDraft();
+    if (first || (!dirty.input && !editing("input-fields"))) resetInputDraft();
+    renderDevices();
+  } catch (e) {
+    document.getElementById("summary").textContent = `Can't reach the web UI service: ${e.message}`;
+  }
+}
+
+document.getElementById("add-hotkey").addEventListener("click", () => {
+  draft.hotkeys.push({ keys: "", kind: "switch", target: server.computers.find((c) => c.name !== server.primary)?.name || "", custom: "" });
+  markLayoutDirty();
+  renderHotkeys();
+});
+document.getElementById("other-options").addEventListener("input", (e) => { draft.other = e.target.value; markLayoutDirty(); });
+document.getElementById("save-layout").addEventListener("click", saveLayout);
+document.getElementById("discard-layout").addEventListener("click", () => { resetLayoutDraft(); setMsg("layout-msg", ""); });
+document.getElementById("add-computer").addEventListener("click", () => {
+  computersDraft.push({ name: "", aliases: "" });
+  dirty.computers = true;
+  renderComputers();
+});
+document.getElementById("save-computers").addEventListener("click", saveComputers);
+document.getElementById("save-input").addEventListener("click", saveInput);
+document.addEventListener("click", (e) => {
+  if (selected && !e.target.closest(".cell, #tray")) { selected = null; renderLayout(); }
+});
+
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

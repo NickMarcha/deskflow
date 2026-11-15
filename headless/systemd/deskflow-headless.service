@@ -1,0 +1,23 @@
+# Headless Deskflow server: shares the keyboard and mouse plugged into this
+# machine with Deskflow clients. Install as a user unit; the user needs the
+# input group. See HEADLESS.md.
+[Unit]
+Description=Deskflow headless server
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Environment=DESKFLOW_BACKEND=evdev
+Environment=QT_QPA_PLATFORM=offscreen
+Environment=DESKFLOW_STATUS_DIR=%t/deskflow-headless
+# input options written by the web UI (DESKFLOW_EVDEV_*, XKB_DEFAULT_LAYOUT)
+EnvironmentFile=-%h/.config/deskflow-headless/env
+RuntimeDirectory=deskflow-headless
+ExecStart=/usr/bin/deskflow-core server -s %h/.config/deskflow-headless/server.ini --new-instance
+# rereads the server config (layout, hotkeys) without dropping clients
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

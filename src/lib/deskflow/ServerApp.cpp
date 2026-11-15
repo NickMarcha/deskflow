@@ -12,6 +12,7 @@
 #include "base/IEventQueue.h"
 #include "base/Log.h"
 #include "common/ExitCodes.h"
+#include "common/HeadlessStatus.h"
 #include "common/PlatformInfo.h"
 #include "common/Settings.h"
 #include "deskflow/App.h"
@@ -29,6 +30,7 @@
 #include "server/Server.h"
 
 // must be before computer header includes
+#include <QDateTime>
 #include <QFileInfo>
 
 #if defined(Q_OS_WIN)
@@ -90,12 +92,18 @@ void ServerApp::reloadSignalHandler(Arch::ThreadSignal, void *)
 void ServerApp::reloadConfig()
 {
   LOG_DEBUG("reload configuration");
-  if (loadConfig(Settings::serverConfigFile())) {
+  bool ok = loadConfig(Settings::serverConfigFile());
+  if (ok) {
     if (m_server != nullptr) {
-      m_server->setConfig(*m_config);
+      ok = m_server->setConfig(*m_config);
     }
     LOG_INFO("reloaded configuration");
   }
+  // tells the headless web UI whether its last save took effect
+  deskflow::headless::updateStatus(
+      {{"configReload",
+        QJsonObject{{"ok", ok}, {"at", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}}}}
+  );
 }
 
 void ServerApp::loadConfig()

@@ -8,6 +8,7 @@
 
 #include "base/IEventQueue.h"
 #include "base/Log.h"
+#include "common/HeadlessStatus.h"
 #include "deskflow/IPrimaryComputer.h"
 #include "platform/EiKeyState.h"
 #include "platform/EvdevEventQueueBuffer.h"
@@ -21,6 +22,7 @@
 #include <fcntl.h>
 #include <libinput.h>
 #include <libudev.h>
+#include <QJsonArray>
 #include <linux/input.h>
 #include <sstream>
 #include <stdexcept>
@@ -178,6 +180,38 @@ EvdevComputer::EvdevComputer(IEventQueue *events)
   m_events->adoptBuffer(new EvdevEventQueueBuffer(libinput_get_fd(m_libinput), m_events));
 
   LOG_INFO("evdev: headless primary, virtual screen %dx%d", m_w, m_h);
+  auto env = [](const char *name) { return QString::fromLocal8Bit(std::getenv(name)); };
+  headless::updateStatus(
+      {{"options",
+        QJsonObject{
+            {"match", env("DESKFLOW_EVDEV_MATCH")},
+            {"ignore", env("DESKFLOW_EVDEV_IGNORE")},
+            {"shape", QStringLiteral("%1x%2").arg(m_w).arg(m_h)},
+            {"accel", m_accelSpeed},
+            {"repeatDelayMs", static_cast<int>(std::lround(m_repeatDelay * 1000))},
+            {"repeatRateHz", static_cast<int>(std::lround(1.0 / m_repeatInterval))},
+            {"layout", env("XKB_DEFAULT_LAYOUT")},
+        }}}
+  );
+}
+
+void EvdevComputer::setDeviceStatus(const std::string &path, const std::string &name, const char *kind, const char *state)
+{
+  if (state == nullptr) {
+    m_deviceStatus.erase(path);
+  } else {
+    m_deviceStatus[path] = {name, kind, state};
+  }
+  QJsonArray devices;
+  for (const auto &[devPath, info] : m_deviceStatus) {
+    devices.append(QJsonObject{
+        {"path", QString::fromStdString(devPath)},
+        {"name", QString::fromStdString(info[0])},
+        {"kind", QString::fromStdString(info[1])},
+        {"state", QString::fromStdString(info[2])},
+    });
+  }
+  headless::updateStatus({{"devices", devices}});
 }
 
 EvdevComputer::~EvdevComputer()
@@ -238,15 +272,24 @@ int EvdevComputer::openRestricted(const char *path, int flags)
     }
   }
 
+  const char *kind = isKeyboard && isPointer ? "keyboard+pointer"
+                     : isKeyboard                ? "keyboard"
+                     : isPointer                 ? "pointer"
+                     : isCompanion               ? "keys"
+                                                 : "other";
   if (!wantDevice(name, isKeyboard || isCompanion, isPointer)) {
     LOG_DEBUG("evdev: skipping %s (%s)", path, name.c_str());
+    // "filtered" is a keyboard or mouse left out by DESKFLOW_EVDEV_MATCH/IGNORE
+    setDeviceStatus(path, name, kind, isKeyboard || isCompanion || isPointer ? "filtered" : "skipped");
     return -EACCES;
   }
 
   int fd = open(path, flags | O_CLOEXEC);
   if (fd < 0) {
-    LOG_WARN("evdev: cannot open %s: %s", path, strerror(errno));
-    return -errno;
+    const int err = errno;
+    LOG_WARN("evdev: cannot open %s: %s", path, strerror(err));
+    setDeviceStatus(path, name, kind, "error");
+    return -err;
   }
   // exclusive grab: nothing else on this machine (the text console) sees the input
   if (ioctl(fd, EVIOCGRAB, 1) != 0) {
@@ -256,6 +299,7 @@ int EvdevComputer::openRestricted(const char *path, int flags)
       "evdev: using %s (%s)%s%s%s", path, name.c_str(), isKeyboard ? " keyboard" : "", isPointer ? " pointer" : "",
       isCompanion ? " keys" : ""
   );
+  setDeviceStatus(path, name, kind, "used");
   return fd;
 }
 
@@ -471,6 +515,7 @@ void EvdevComputer::handleSystemEvent(const Event &)
     case LIBINPUT_EVENT_DEVICE_REMOVED: {
       auto *device = libinput_event_get_device(event);
       LOG_INFO("evdev: device removed: %s", libinput_device_get_name(device));
+      setDeviceStatus(std::string("/dev/input/") + libinput_device_get_sysname(device), {}, "", nullptr);
       if (auto it = std::find(m_keyboards.begin(), m_keyboards.end(), device); it != m_keyboards.end()) {
         libinput_device_unref(*it);
         m_keyboards.erase(it);

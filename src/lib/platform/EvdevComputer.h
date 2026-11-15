@@ -9,6 +9,7 @@
 #include "deskflow/PlatformComputer.h"
 
 #include <bitset>
+#include <array>
 #include <map>
 #include <string>
 #include <vector>
@@ -112,12 +113,15 @@ private:
   void startRepeat(KeyID key, KeyButton button);
   void stopRepeat();
   void onRepeatTimer();
+  void setDeviceStatus(const std::string &path, const std::string &name, const char *kind, const char *state);
 
   IEventQueue *m_events = nullptr;
   EiKeyState *m_keyState = nullptr;
   udev *m_udev = nullptr;
   libinput *m_libinput = nullptr;
   std::vector<libinput_device *> m_keyboards;
+  // every node libinput offered, for the web UI: path -> {name, kind, state}
+  std::map<std::string, std::array<std::string, 3>> m_deviceStatus;
 
   std::vector<std::string> m_match;
   std::vector<std::string> m_ignore;

@@ -27,6 +27,10 @@
 #include <QTextStream>
 #include <QThread>
 
+#if !defined(Q_OS_WIN)
+#include <csignal>
+#endif
+
 void qtMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
 {
   const auto utf8 = message.toUtf8();
@@ -71,6 +75,15 @@ int main(int argc, char **argv)
 {
 #if defined(Q_OS_WIN)
   ArchMiscWindows::setInstanceWin32(GetModuleHandle(nullptr));
+#else
+  // Block SIGHUP before Qt starts any threads, so every thread inherits the
+  // block and only Arch's signal thread (sigwait) receives it. Otherwise the
+  // kernel can deliver it to a Qt thread, whose default action kills the
+  // process instead of reloading the server config.
+  sigset_t hangup;
+  sigemptyset(&hangup);
+  sigaddset(&hangup, SIGHUP);
+  pthread_sigmask(SIG_BLOCK, &hangup, nullptr);
 #endif
 
   QApplication::setApplicationName(QStringLiteral("%1 Core").arg(kAppName));

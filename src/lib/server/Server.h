@@ -146,6 +146,7 @@ public:
   void setHeadlessPrimary(bool headless)
   {
     m_headlessPrimary = headless;
+    publishStatus();
   }
   Server(Server const &) = delete;
   Server(Server &&) = delete;
@@ -396,6 +397,8 @@ private:
   std::vector<std::string> m_recentClients;
   void noteActiveClient(const BaseClientProxy *client);
   void leaveHeadlessPrimary();
+  // writes clients and the active computer for the headless web UI
+  void publishStatus() const;
 
   // current configuration
   ServerConfig *m_config = nullptr;

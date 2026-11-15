@@ -1,0 +1,603 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: (C) 2026 Deskflow Developers
+# SPDX-License-Identifier: GPL-2.0-only WITH LicenseRef-OpenSSL-Exception
+"""Web UI for the headless Deskflow server (see HEADLESS.md).
+
+Edits the server's layout, hotkeys, computers and input options, and shows
+what the running server reports in $DESKFLOW_STATUS_DIR/status.json.
+
+- Layout and hotkeys go to the server config file. The server reloads it on
+  SIGHUP without dropping clients. If the server rejects it, the previous
+  file is put back.
+- Computers live in the settings INI and input options in an env file next
+  to it. The server reads both only at startup, so saving them restarts it.
+
+Standard library only. Listens on 127.0.0.1 by default; put it behind
+`tailscale serve` or an SSH tunnel rather than exposing it on the LAN.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import signal
+import subprocess
+import tempfile
+import threading
+import time
+from datetime import datetime, timezone
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+DIRS = ("left", "right", "up", "down")
+STEP = {"left": (-1, 0), "right": (1, 0), "up": (0, -1), "down": (0, 1)}
+ENV_KEYS = (
+    "DESKFLOW_EVDEV_MATCH",
+    "DESKFLOW_EVDEV_IGNORE",
+    "DESKFLOW_EVDEV_SHAPE",
+    "DESKFLOW_EVDEV_ACCEL",
+    "DESKFLOW_EVDEV_REPEAT",
+    "XKB_DEFAULT_LAYOUT",
+)
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
+KEEP_BACKUPS = 20
+MAX_BODY = 64 * 1024
+
+
+class ApiError(Exception):
+    def __init__(self, message: str, status: HTTPStatus = HTTPStatus.BAD_REQUEST):
+        super().__init__(message)
+        self.status = status
+
+
+# --- files -----------------------------------------------------------------
+
+
+def atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        if path.exists():
+            os.chmod(tmp, path.stat().st_mode & 0o777)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
+# --- settings INI (QSettings format) ----------------------------------------
+
+
+def ini_unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        value = value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
+def ini_quote(value: str) -> str:
+    if re.search(r'[,;"=\\#]|^\s|\s$', value):
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return value
+
+
+def ini_sections(text: str) -> list[tuple[str, list[str]]]:
+    sections: list[tuple[str, list[str]]] = [("", [])]
+    for line in text.splitlines():
+        m = re.match(r"^\[(.+)\]\s*$", line)
+        if m:
+            sections.append((m.group(1), []))
+        else:
+            sections[-1][1].append(line)
+    return sections
+
+
+def ini_values(lines: list[str]) -> dict[str, str]:
+    out = {}
+    for line in lines:
+        if "=" in line and not line.lstrip().startswith((";", "#")):
+            key, value = line.split("=", 1)
+            out[key.strip()] = ini_unquote(value)
+    return out
+
+
+def ini_join(sections: list[tuple[str, list[str]]]) -> str:
+    out: list[str] = []
+    for name, lines in sections:
+        if name:
+            out.append(f"[{name}]")
+        out.extend(line for line in lines if line.strip())
+    return "\n".join(out) + "\n"
+
+
+# --- server config ------------------------------------------------------------
+
+
+def parse_conf(text: str) -> tuple[dict[str, dict[str, str]], list[str], list[str]]:
+    """Returns (links, option lines, other sections kept verbatim)."""
+    links: dict[str, dict[str, str]] = {}
+    options: list[str] = []
+    other: list[str] = []
+    section = None
+    current = None
+    buf: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if section is None:
+            m = re.match(r"section:\s*(\w+)", line)
+            if m:
+                section, current, buf = m.group(1), None, [raw]
+            continue
+        if line == "end":
+            if section not in ("links", "options"):
+                other.append("\n".join([*buf, raw]))
+            section = None
+            continue
+        if section == "links":
+            if line.endswith(":"):
+                current = line[:-1].strip()
+                links.setdefault(current, {})
+                continue
+            m = re.match(r"(left|right|up|down)(\([^)]*\))?\s*=\s*([^\s(]+)", line)
+            if m and current:
+                links[current][m.group(1)] = m.group(3)
+        elif section == "options":
+            options.append(line)
+        else:
+            buf.append(raw)
+    return links, options, other
+
+
+def derive_cells(links: dict[str, dict[str, str]], names: list[str]) -> dict[str, list[int]]:
+    """Places computers on a grid by walking the links (when no layout file exists yet)."""
+    cells: dict[str, tuple[int, int]] = {}
+    taken: set[tuple[int, int]] = set()
+    for start in [n for n in names if n in links] + [n for n in links if n not in names]:
+        if start in cells:
+            continue
+        col = max((c for c, _ in cells.values()), default=-2) + 2
+        queue = [(start, (col, 0))]
+        while queue:
+            name, pos = queue.pop(0)
+            if name in cells or pos in taken:
+                continue
+            cells[name] = pos
+            taken.add(pos)
+            for d, target in links.get(name, {}).items():
+                dc, dr = STEP[d]
+                queue.append((target, (pos[0] + dc, pos[1] + dr)))
+    if not cells:
+        return {}
+    c0 = min(c for c, _ in cells.values())
+    r0 = min(r for _, r in cells.values())
+    return {n: [c - c0, r - r0] for n, (c, r) in cells.items()}
+
+
+def build_conf(cells: dict[str, list[int]], options: list[str], other: list[str]) -> str:
+    pos = {tuple(v): k for k, v in cells.items()}
+    out = [
+        "# Written by deskflow-headless-webui. Saving in the web UI rewrites this file;",
+        "# computer positions are kept in webui-layout.json next to it.",
+        "",
+        "section: links",
+    ]
+    for name in sorted(cells, key=lambda n: (cells[n][1], cells[n][0])):
+        c, r = cells[name]
+        neighbours = []
+        for d in DIRS:
+            dc, dr = STEP[d]
+            target = pos.get((c + dc, r + dr))
+            if target:
+                neighbours.append(f"\t\t{d} = {target}")
+        if neighbours:
+            out.append(f"\t{name}:")
+            out.extend(neighbours)
+    out += ["end", "", "section: options"]
+    out += [f"\t{o}" for o in options]
+    out.append("end")
+    for block in other:
+        out += ["", block]
+    return "\n".join(out) + "\n"
+
+
+# --- the app ------------------------------------------------------------------
+
+
+class App:
+    def __init__(self, settings: Path, status_dir: Path, unit: str, static_dir: Path):
+        self.settings = settings
+        self.dir = settings.parent
+        self.status_file = status_dir / "status.json"
+        self.unit = unit
+        self.static_dir = static_dir
+        self.env_file = self.dir / "env"
+        self.layout_file = self.dir / "webui-layout.json"
+        self.backup_dir = self.dir / "backups"
+        self.lock = threading.Lock()
+
+    # reading
+
+    def ini(self) -> list[tuple[str, list[str]]]:
+        text = read_text(self.settings)
+        if text is None:
+            raise ApiError(f"settings file not found: {self.settings}", HTTPStatus.INTERNAL_SERVER_ERROR)
+        return ini_sections(text)
+
+    def conf_path(self, sections=None) -> Path:
+        sections = sections or self.ini()
+        for name, lines in sections:
+            if name == "server":
+                path = ini_values(lines).get("externalConfigFile")
+                if path:
+                    return Path(path)
+        return self.dir / "server.conf"
+
+    def primary(self, sections) -> str:
+        for name, lines in sections:
+            if name == "core":
+                return ini_values(lines).get("computerName", "")
+        return ""
+
+    def computers(self, sections) -> list[dict]:
+        out = []
+        for name, lines in sections:
+            if name.startswith("computer_"):
+                values = ini_values(lines)
+                aliases = [a.strip() for a in values.get("aliases", "").split(",") if a.strip()]
+                out.append({"name": values.get("name", name[len("computer_"):]), "aliases": aliases})
+        return out
+
+    def status(self) -> dict | None:
+        text = read_text(self.status_file)
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    def env(self) -> dict[str, str]:
+        out = {k: "" for k in ENV_KEYS}
+        for line in (read_text(self.env_file) or "").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                key, value = line.split("=", 1)
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] == '"':
+                    value = value[1:-1]
+                if key.strip() in out:
+                    out[key.strip()] = value
+        return out
+
+    def service(self) -> dict:
+        try:
+            res = subprocess.run(
+                ["systemctl", "--user", "show", self.unit, "-p", "ActiveState,SubState,MainPID,ActiveEnterTimestamp"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return {}
+        return dict(line.split("=", 1) for line in res.stdout.splitlines() if "=" in line)
+
+    def journal_tail(self, lines: int = 8) -> list[str]:
+        try:
+            res = subprocess.run(
+                ["journalctl", f"_SYSTEMD_USER_UNIT={self.unit}", "-n", str(lines), "-o", "cat", "--no-pager"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return res.stdout.splitlines()
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+
+    def layout(self, sections) -> tuple[dict, list[str], list[str]]:
+        conf = read_text(self.conf_path(sections)) or ""
+        links, options, other = parse_conf(conf)
+        names = [c["name"] for c in self.computers(sections)]
+        try:
+            cells = json.loads(read_text(self.layout_file) or "{}").get("cells", {})
+        except json.JSONDecodeError:
+            cells = {}
+        if not cells:
+            cells = derive_cells(links, names)
+        primary = self.primary(sections)
+        cells = {n: v for n, v in cells.items() if n in names and n != primary}
+        return cells, options, other
+
+    def state(self) -> dict:
+        sections = self.ini()
+        cells, options, _ = self.layout(sections)
+        return {
+            "primary": self.primary(sections),
+            "computers": self.computers(sections),
+            "cells": cells,
+            "options": options,
+            "env": self.env(),
+            "status": self.status(),
+            "service": self.service(),
+            "files": {"settings": str(self.settings), "config": str(self.conf_path(sections)), "env": str(self.env_file)},
+        }
+
+    # writing
+
+    def backup(self, path: Path) -> None:
+        text = read_text(path)
+        if text is None:
+            return
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        (self.backup_dir / f"{path.name}.{stamp}").write_text(text, encoding="utf-8")
+        old = sorted(self.backup_dir.glob(f"{path.name}.*"))
+        for stale in old[:-KEEP_BACKUPS]:
+            stale.unlink(missing_ok=True)
+
+    def main_pid(self) -> int:
+        try:
+            return int(self.service().get("MainPID", "0"))
+        except ValueError:
+            return 0
+
+    def reload_marker(self):
+        return ((self.status() or {}).get("configReload") or {}).get("at")
+
+    def wait_reload(self, before, timeout: float = 5.0) -> dict | None:
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            result = (self.status() or {}).get("configReload")
+            if result and result.get("at") != before:
+                return result
+            time.sleep(0.1)
+        return None
+
+    def hup(self) -> dict | None:
+        pid = self.main_pid()
+        if pid <= 0:
+            return {"ok": True, "note": "server is not running; it will load the file when it starts"}
+        before = self.reload_marker()
+        os.kill(pid, signal.SIGHUP)
+        if self.status() is None:
+            return {"ok": True, "note": "server has no status file, so the reload could not be confirmed"}
+        return self.wait_reload(before)
+
+    def restart(self) -> bool:
+        subprocess.run(["systemctl", "--user", "restart", self.unit], capture_output=True, timeout=20)
+        time.sleep(3)
+        return self.service().get("ActiveState") == "active"
+
+    def check_cells(self, cells, names: set[str]) -> dict[str, list[int]]:
+        if not isinstance(cells, dict):
+            raise ApiError("cells must be an object")
+        out, seen = {}, set()
+        for name, pos in cells.items():
+            if name not in names:
+                raise ApiError(f"unknown computer: {name}")
+            if not (isinstance(pos, list) and len(pos) == 2 and all(isinstance(v, int) and 0 <= v < 32 for v in pos)):
+                raise ApiError(f"bad position for {name}")
+            if tuple(pos) in seen:
+                raise ApiError("two computers in the same cell")
+            seen.add(tuple(pos))
+            out[name] = pos
+        return out
+
+    @staticmethod
+    def check_options(options) -> list[str]:
+        if not isinstance(options, list) or not all(isinstance(o, str) for o in options):
+            raise ApiError("options must be a list of lines")
+        out = []
+        for o in options:
+            o = o.strip()
+            if not o:
+                continue
+            if "\n" in o or "\r" in o or o == "end" or o.startswith("section:"):
+                raise ApiError(f"not allowed in options: {o!r}")
+            out.append(o)
+        return out
+
+    def save_layout(self, body: dict) -> dict:
+        with self.lock:
+            sections = self.ini()
+            names = {c["name"] for c in self.computers(sections)} - {self.primary(sections)}
+            cells = self.check_cells(body.get("cells", {}), names)
+            options = self.check_options(body.get("options", []))
+            conf_path = self.conf_path(sections)
+            old_conf = read_text(conf_path) or ""
+            _, _, other = parse_conf(old_conf)
+            old_layout = read_text(self.layout_file)
+
+            self.backup(conf_path)
+            atomic_write(conf_path, build_conf(cells, options, other))
+            atomic_write(self.layout_file, json.dumps({"cells": cells}, indent=2) + "\n")
+            result = self.hup()
+            if result and result.get("ok"):
+                return {"ok": True, "note": result.get("note", "applied; clients stayed connected")}
+
+            # put the old file back and reload it
+            atomic_write(conf_path, old_conf)
+            if old_layout is None:
+                self.layout_file.unlink(missing_ok=True)
+            else:
+                atomic_write(self.layout_file, old_layout)
+            self.hup()
+            errors = [l for l in self.journal_tail(20) if "configuration" in l or "ERROR" in l][-3:]
+            raise ApiError("The server rejected the new config, so the previous one is back in place."
+                           + ("\n" + "\n".join(errors) if errors else ""))
+
+    def save_computers(self, body: dict) -> dict:
+        with self.lock:
+            sections = self.ini()
+            primary = self.primary(sections)
+            wanted = body.get("computers")
+            if not isinstance(wanted, list):
+                raise ApiError("computers must be a list")
+            seen: set[str] = {primary}
+            new_sections = []
+            for c in wanted:
+                name = str(c.get("name", "")).strip()
+                aliases = [str(a).strip() for a in c.get("aliases", []) if str(a).strip()]
+                for n in [name, *aliases]:
+                    if not NAME_RE.match(n):
+                        raise ApiError(f"not a valid computer name: {n!r}")
+                    if n in seen:
+                        raise ApiError(f"name used twice: {n}")
+                    seen.add(n)
+                lines = [f"name={name}"]
+                if aliases:
+                    lines.insert(0, f"aliases={ini_quote(', '.join(aliases))}")
+                new_sections.append((f"computer_{name}", lines))
+
+            kept = [s for s in sections if not s[0].startswith("computer_") or s[0] == f"computer_{primary}"]
+            if not any(s[0] == f"computer_{primary}" for s in kept):
+                kept.append((f"computer_{primary}", [f"name={primary}"]))
+            names = {c["name"] for c in wanted}
+
+            cells, options, other = self.layout(sections)
+            cells = {n: p for n, p in cells.items() if n in names}
+            # drop hotkeys that target a removed computer, e.g. switchToScreen(old)
+            gone = {c["name"] for c in self.computers(sections)} - names - {primary}
+            options = [o for o in options if not any(re.search(rf"[(,]\s*{re.escape(g)}\s*\)", o) for g in gone)]
+
+            conf_path = self.conf_path(sections)
+            old_ini, old_conf = read_text(self.settings), read_text(conf_path)
+            old_layout = read_text(self.layout_file)
+            self.backup(self.settings)
+            self.backup(conf_path)
+            atomic_write(self.settings, ini_join(kept + new_sections))
+            atomic_write(conf_path, build_conf(cells, options, other))
+            atomic_write(self.layout_file, json.dumps({"cells": cells}, indent=2) + "\n")
+            if self.restart():
+                return {"ok": True, "note": "saved; the server restarted and clients are reconnecting"}
+            atomic_write(self.settings, old_ini or "")
+            atomic_write(conf_path, old_conf or "")
+            if old_layout is not None:
+                atomic_write(self.layout_file, old_layout)
+            self.restart()
+            raise ApiError("The server didn't start with the new computers, so the old ones are back.")
+
+    def save_input(self, body: dict) -> dict:
+        with self.lock:
+            values = {}
+            for key in ENV_KEYS:
+                value = str(body.get(key, "")).strip()
+                if any(ch in value for ch in '"\\\n\r$`'):
+                    raise ApiError(f"{key}: quotes, backslashes, $ and backticks are not allowed")
+                values[key] = value
+            if values["DESKFLOW_EVDEV_SHAPE"] and not re.fullmatch(r"\d{2,5}x\d{2,5}", values["DESKFLOW_EVDEV_SHAPE"]):
+                raise ApiError("virtual screen size must look like 1920x1080")
+            if values["DESKFLOW_EVDEV_REPEAT"] and not re.fullmatch(r"\d{1,4},\d{1,3}", values["DESKFLOW_EVDEV_REPEAT"]):
+                raise ApiError("key repeat must look like 500,30 (delay ms, rate Hz)")
+            if values["DESKFLOW_EVDEV_ACCEL"]:
+                try:
+                    if not -1.0 <= float(values["DESKFLOW_EVDEV_ACCEL"]) <= 1.0:
+                        raise ValueError
+                except ValueError:
+                    raise ApiError("pointer speed must be between -1 and 1") from None
+            old = read_text(self.env_file)
+            self.backup(self.env_file)
+            lines = ["# Written by deskflow-headless-webui. Read by the server at startup."]
+            lines += [f'{k}="{v}"' for k, v in values.items() if v]
+            atomic_write(self.env_file, "\n".join(lines) + "\n")
+            if self.restart():
+                return {"ok": True, "note": "saved; the server restarted and clients are reconnecting"}
+            if old is None:
+                self.env_file.unlink(missing_ok=True)
+            else:
+                atomic_write(self.env_file, old)
+            self.restart()
+            raise ApiError("The server didn't start with these input settings, so the old ones are back.")
+
+
+# --- HTTP ---------------------------------------------------------------------
+
+
+def make_handler(app: App):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "deskflow-headless-webui"
+
+        def log_message(self, fmt, *args):  # journald adds timestamps
+            print(f"{self.address_string()} {fmt % args}", flush=True)
+
+        def send_json(self, data, status=HTTPStatus.OK):
+            body = json.dumps(data).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            try:
+                if self.path in ("/", "/index.html"):
+                    body = (app.static_dir / "index.html").read_bytes()
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif self.path == "/api/state":
+                    self.send_json(app.state())
+                else:
+                    self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            except ApiError as e:
+                self.send_json({"error": str(e)}, e.status)
+
+        def do_POST(self):
+            routes = {"/api/layout": app.save_layout, "/api/computers": app.save_computers, "/api/input": app.save_input}
+            route = routes.get(self.path)
+            if route is None:
+                return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            # A custom header can't be sent cross-site without a CORS preflight,
+            # which this server never answers, so other sites can't post here.
+            if self.headers.get("X-Deskflow-Webui") != "1":
+                return self.send_json({"error": "missing X-Deskflow-Webui header"}, HTTPStatus.FORBIDDEN)
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_BODY:
+                return self.send_json({"error": "request too large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ApiError("expected a JSON object")
+                self.send_json(route(body))
+            except json.JSONDecodeError:
+                self.send_json({"error": "invalid JSON"}, HTTPStatus.BAD_REQUEST)
+            except ApiError as e:
+                self.send_json({"error": str(e)}, e.status)
+
+    return Handler
+
+
+def main() -> None:
+    runtime = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--settings", type=Path, default=Path.home() / ".config/deskflow-headless/server.ini",
+                        help="the server's settings INI (the -s argument of deskflow-core)")
+    parser.add_argument("--status-dir", type=Path, default=Path(runtime) / "deskflow-headless",
+                        help="the server's DESKFLOW_STATUS_DIR")
+    parser.add_argument("--unit", default="deskflow-headless.service", help="systemd user unit of the server")
+    parser.add_argument("--listen", default="127.0.0.1:24880", help="address:port to listen on")
+    parser.add_argument("--static", type=Path, default=Path(__file__).resolve().parent,
+                        help="directory holding index.html")
+    args = parser.parse_args()
+
+    host, _, port = args.listen.rpartition(":")
+    app = App(args.settings.expanduser(), args.status_dir, args.unit, args.static)
+    server = ThreadingHTTPServer((host or "127.0.0.1", int(port)), make_handler(app))
+    print(f"listening on http://{host}:{port}/ for {app.settings}", flush=True)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

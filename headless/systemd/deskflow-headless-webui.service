@@ -1,0 +1,13 @@
+# Web UI for the headless Deskflow server. Listens on 127.0.0.1:24880; reach it
+# through `tailscale serve` or an SSH tunnel. See HEADLESS.md.
+[Unit]
+Description=Deskflow headless web UI
+After=deskflow-headless.service
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/share/deskflow/headless/deskflow-headless-webui
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

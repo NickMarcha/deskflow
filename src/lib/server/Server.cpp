@@ -10,6 +10,7 @@
 
 #include "base/IEventQueue.h"
 #include "base/Log.h"
+#include "common/HeadlessStatus.h"
 #include "deskflow/AppUtil.h"
 #include "deskflow/Computer.h"
 #include "deskflow/DeskflowException.h"
@@ -24,6 +25,8 @@
 #include "server/ClientProxy.h"
 #include "server/ClientProxyUnknown.h"
 #include "server/PrimaryClient.h"
+
+#include <QJsonArray>
 
 #ifdef _WIN32
 #include <algorithm>
@@ -287,6 +290,31 @@ void Server::adoptClient(BaseClientProxy *client)
     LOG_INFO("headless: switching to newly connected \"%s\"", getName(client).c_str());
     jumpToComputer(client);
   }
+  publishStatus();
+}
+
+void Server::publishStatus() const
+{
+  if (!m_headlessPrimary) {
+    return;
+  }
+  QJsonArray clients;
+  for (const auto &[name, client] : m_clients) {
+    if (client == m_primaryClient) {
+      continue;
+    }
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t w = 0;
+    int32_t h = 0;
+    client->getShape(x, y, w, h);
+    clients.append(QJsonObject{{"name", QString::fromStdString(name)}, {"width", w}, {"height", h}});
+  }
+  deskflow::headless::updateStatus(
+      {{"server", QString::fromStdString(getName(m_primaryClient))},
+       {"active", QString::fromStdString(getName(m_active))},
+       {"clients", clients}}
+  );
 }
 
 void Server::noteActiveClient(const BaseClientProxy *client)
@@ -524,6 +552,7 @@ void Server::switchComputer(BaseClientProxy *dst, int32_t x, int32_t y, bool for
     // cut over
     m_active = dst;
     noteActiveClient(dst);
+    publishStatus();
 
     // increment enter sequence number
     ++m_seqNum;
@@ -1332,6 +1361,7 @@ void Server::handleClientDisconnected(BaseClientProxy *client)
   removeActiveClient(client);
   removeOldClient(client);
   leaveHeadlessPrimary();
+  publishStatus();
 
   // m_clients always contains the primary (server) computer, so 1 means no remote clients.
   using enum deskflow::core::ConnectionState;

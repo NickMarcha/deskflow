@@ -228,6 +228,14 @@ if(UNIX)
       target_compile_definitions(platform PUBLIC WINAPI_EVDEV)
       target_include_directories(platform PRIVATE ${LIBINPUT_INCLUDE_DIRS})
       target_link_libraries(platform PRIVATE ${LIBINPUT_LINK_LIBRARIES})
+      # headless server extras: web UI and systemd user units
+      install(PROGRAMS ${CMAKE_SOURCE_DIR}/headless/webui/deskflow-headless-webui
+              DESTINATION ${CMAKE_INSTALL_DATADIR}/deskflow/headless)
+      install(FILES ${CMAKE_SOURCE_DIR}/headless/webui/index.html
+              DESTINATION ${CMAKE_INSTALL_DATADIR}/deskflow/headless)
+      install(FILES ${CMAKE_SOURCE_DIR}/headless/systemd/deskflow-headless.service
+                    ${CMAKE_SOURCE_DIR}/headless/systemd/deskflow-headless-webui.service
+              DESTINATION lib/systemd/user)
     endif()
   endif()
 endif()

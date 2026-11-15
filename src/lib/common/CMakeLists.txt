@@ -15,6 +15,8 @@ add_library(common STATIC
   Coordinate.h
   Enums.h
   ExitCodes.h
+  HeadlessStatus.cpp
+  HeadlessStatus.h
   Hotkey.cpp
   Hotkey.h
   I18N.h
