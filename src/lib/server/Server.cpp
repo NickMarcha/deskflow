@@ -1412,6 +1412,7 @@ void Server::handleToggleComputerEvent(const Event &)
   // Get the list of connected computers in config order
   std::vector<std::string> computers;
   getClients(computers);
+  LOG_DEBUG("next computer: active \"%s\", %zu connected", getName(m_active).c_str(), computers.size());
 
   // a headless primary is never a destination
   if (m_headlessPrimary) {

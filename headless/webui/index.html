@@ -715,17 +715,19 @@ function renderBindingEditor() {
       el("label", { style: "display:flex;gap:6px;align-items:center;margin:0" },
         el("input", { type: "checkbox", checked: capture.onlyDevice, onchange: (e) => { capture.onlyDevice = e.target.checked; } }),
         "Only on this device"),
-      el("button", { class: "primary", onclick: addBinding }, "Add"),
+      el("button", { class: "primary", onclick: addBinding }, "Add and save"),
       el("button", { onclick: () => stopCapture(false) }, "Cancel")),
   );
 }
 
-function addBinding() {
+// moves the captured input into the list; false if what to send isn't valid
+function takeCapture() {
   let send;
   try {
     send = parseCombo(capture.text);
   } catch (e) {
-    return setMsg("bindings-msg", e.message, true);
+    setMsg("bindings-msg", e.message, true);
+    return false;
   }
   const device = capture.onlyDevice ? capture.device : "";
   bindingsDraft = bindingsDraft.filter((b) => !(b.device === device && b.code === capture.code));
@@ -733,9 +735,16 @@ function addBinding() {
   capture = null;
   markBindingsDirty();
   renderBindings();
+  return true;
+}
+
+function addBinding() {
+  if (takeCapture()) saveBindings();
 }
 
 async function saveBindings() {
+  // a binding still in the editor counts too
+  if (capture?.phase === "captured" && !takeCapture()) return;
   setMsg("bindings-msg", "Saving…");
   try {
     const res = await api("/api/bindings", { bindings: bindingsDraft });

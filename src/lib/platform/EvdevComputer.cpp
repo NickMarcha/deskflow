@@ -175,6 +175,11 @@ EvdevComputer::EvdevComputer(IEventQueue *events)
   }
   loadBindings();
 
+  // xkb's default "srvrkeys" turn Ctrl+Alt+F1..F12 into console switching
+  // (XF86Switch_VT_n), which no hotkey matches and no client can type. A
+  // headless server never switches consoles, so make them plain F-keys.
+  setenv("XKB_DEFAULT_OPTIONS", "srvrkeys:none", 0);
+
   // EiKeyState only needs its computer to fake keys, which a primary never does
   m_keyState = new EiKeyState(nullptr, events);
 
@@ -377,6 +382,7 @@ std::uint32_t EvdevComputer::registerHotKey(KeyID key, KeyModifierMask mask)
 
 void EvdevComputer::unregisterHotKey(std::uint32_t id)
 {
+  LOG_DEBUG("evdev: unregistered hotkey %u", id);
   m_hotkeys.erase(id);
 }
 
@@ -595,6 +601,7 @@ bool EvdevComputer::onHotkey(KeyID key, bool isPressed, KeyModifierMask mask)
   const KeyModifierMask locks = KeyModifierCapsLock | KeyModifierNumLock | KeyModifierScrollLock;
   for (const auto &[id, hotkey] : m_hotkeys) {
     if (hotkey.first == key && (hotkey.second & ~locks) == (mask & ~locks)) {
+      LOG_DEBUG("evdev: hotkey %u %s (key=0x%x mask=0x%x)", id, isPressed ? "down" : "up", key, mask);
       sendEvent(
           isPressed ? EventTypes::PrimaryComputerHotkeyDown : EventTypes::PrimaryComputerHotkeyUp, HotKeyInfo::alloc(id)
       );
