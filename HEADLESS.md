@@ -18,6 +18,7 @@ The `headless` branch carries a short stack of commits on top of the latest upst
 - `src/lib/platform/EvdevEventQueueBuffer.{h,cpp}`: wakes Deskflow's event loop on the libinput fd.
 - `ServerApp::createComputer()` picks the backend when `DESKFLOW_BACKEND=evdev` is set. Without it, Deskflow behaves exactly like upstream.
 - `EiKeyState::keyRepeats()`: a small helper the backend uses.
+- `CoreIpcServer` takes a `keystroke` command, and `Config::parseKeystrokeAction()` parses it (see "Sending keystrokes" below).
 - `src/lib/common/HeadlessStatus.{h,cpp}`: when `DESKFLOW_STATUS_DIR` is set, the server writes `status.json` there: connected clients and their screen sizes, which computer has the cursor, every input device and whether it's used, and the result of the last config reload. Nothing is written when the variable is unset.
 - `deskflow-core` blocks SIGHUP, SIGINT, SIGTERM and SIGUSR2 before Qt starts its threads, so they reach Arch's signal thread: SIGHUP reloads the server config and SIGTERM shuts down cleanly. In 1.27 they can land on a Qt thread and kill the process instead. This is upstream PR deskflow/deskflow#10382 (issue #10335), carried here until it is merged.
 - `headless/webui/`: the web UI (below). `headless/systemd/`: user units for the server and the web UI. Both are installed by the `.deb`.
@@ -67,6 +68,30 @@ In the server config, don't link anything into the Pi's own screen if you never 
 - **Input devices.** What the server found and whether it uses each one, plus the options above. Saving restarts the server.
 
 Every save keeps the previous file in `~/.config/deskflow-headless/backups/` (the last 20 of each).
+
+## Sending keystrokes
+
+Other programs on the Pi can make the server press and release a key combination on some computers, the same way a hotkey with a `keystroke(Control+Shift+Alt+M,sage:sage-dev)` action does. The first use is a headset button that toggles Discord's mute on every computer.
+
+The web UI takes `POST /api/keystroke` with the same `X-Deskflow-Webui: 1` header as its other POSTs:
+
+```sh
+curl -s -H 'X-Deskflow-Webui: 1' -H 'Content-Type: application/json'   -d '{"keys": "Control+Shift+Alt+M", "computers": ["sage", "sage-dev", "sagedeck"]}'   http://127.0.0.1:24880/api/keystroke
+```
+
+`keys` uses the config file's key syntax. `computers` takes names or aliases, `["*"]` means every connected client, and leaving it out sends the keys to the computer with the cursor. The answer is `{"ok": true}`, or `{"ok": false, "error": "..."}` with status 400 when the server rejects the keys or a computer name, 503 when it can't reach the server and 504 when the server doesn't answer. An unknown key or computer name is an error. The request does nothing in that case.
+
+The web UI also listens on the unix socket `$XDG_RUNTIME_DIR/deskflow-headless/webui.sock` (mode 0660), so a container that mounts `/run/user/$UID` can call it without TCP:
+
+```sh
+curl -s --unix-socket /run/user/1000/deskflow-headless/webui.sock   -H 'X-Deskflow-Webui: 1' -H 'Content-Type: application/json'   -d '{"keys": "Control+Shift+Alt+M", "computers": ["*"]}'   http://localhost/api/keystroke
+```
+
+`--unix-socket PATH` moves it, and `--unix-socket ''` turns it off. That directory belongs to the server's unit, and systemd deletes it whenever the server stops or restarts. The web UI checks every 2 seconds and creates the socket again.
+
+Under the hood the web UI sends `keystroke=Control+Shift+Alt+M,sage:sage-dev` to `deskflow-core`'s IPC socket (`$TMPDIR/deskflow-core`, or `/tmp/deskflow-core`; `--core-socket` changes it) and gets back `ok` or `error=<message>`. Upstream makes that socket world-writable for its GUI, so the server only accepts `keystroke` from processes of its own user (checked with `SO_PEERCRED`). The key runs through `InputFilter::KeystrokeAction`, the code that runs a `keystroke()` hotkey action.
+
+Stock Linux clients that use libei (KDE and GNOME on Wayland) drop these keys while the cursor is on another computer, reported upstream as deskflow/deskflow#10393. Windows clients get them either way.
 
 ## Logitech devices (HID++)
 
