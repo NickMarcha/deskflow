@@ -210,7 +210,7 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
     <div id="binding-editor"></div>
 
     <h3>Logitech buttons</h3>
-    <p class="hint">Extra buttons on Logitech devices, such as the MX Master's thumb button, only work when told to act as a normal button. The device forgets this when it is switched off; the server tells it again when it notices the device is back.</p>
+    <p class="hint">Extra buttons on Logitech devices, like the MX Master's thumb button, can be bound above like any other input. "Acts as" instead makes a button behave as another one inside the mouse itself. The mouse forgets that when it's switched off, and the server sets it again once the mouse is back.</p>
     <div class="table-scroll">
       <table>
         <thead><tr><th>Device</th><th>Battery</th><th>Button</th><th>Acts as</th></tr></thead>
@@ -227,7 +227,7 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
 
   <section id="computers-section">
     <h2>Computers</h2>
-    <p class="hint">The names clients connect with. Aliases let a client whose own name differs (its hostname, say) still match. Saving restarts the server, and clients reconnect within a few seconds.</p>
+    <p class="hint">The names clients connect with. Aliases let a client match even when its own name differs, for example its hostname. Saving restarts the server, and clients reconnect within a few seconds.</p>
     <div class="table-scroll">
       <table>
         <thead><tr><th style="width:30%">Name</th><th>Aliases, comma separated</th><th style="width:16%">Status</th><th style="width:1%"></th></tr></thead>
@@ -243,7 +243,7 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
 
   <section id="input-section">
     <h2>Input devices</h2>
-    <p class="hint">Everything plugged into this server. Only keyboards and mice are used; other devices, such as headset buttons, are skipped. Saving restarts the server.</p>
+    <p class="hint">Everything plugged into this server. The server uses keyboards and mice and leaves everything else alone, such as headset buttons. Saving restarts the server.</p>
     <div class="table-scroll">
       <table>
         <thead><tr><th>Device</th><th>Node</th><th>Type</th><th>State</th><th style="width:1%"></th></tr></thead>
@@ -335,7 +335,7 @@ function renderSummary() {
     add("Connected", `${clients.length} of ${total}`);
     if (status?.active && status.active !== primary) add("Cursor on", status.active);
     else if (clients.length === 0) add("", "waiting for a client");
-    if (!status) add("", "no status file (is DESKFLOW_STATUS_DIR set?)", "low");
+    if (!status) add("", "no status file, check DESKFLOW_STATUS_DIR", "low");
     for (const d of status?.hidpp || []) {
       if (d.battery) add(d.device, `${d.battery.percent} %${d.battery.state === "discharging" ? "" : `, ${d.battery.state}`}`, isLow(d.battery) ? "low" : "");
     }
@@ -408,7 +408,7 @@ function renderNotifyControls() {
     el("label", {}, "at", level, "%"),
   );
   if (!notificationsUsable()) {
-    box.append(msg("This browser can't show notifications here (it needs HTTPS)."));
+    box.append(msg("Notifications need HTTPS, so this browser can't show them here."));
   } else if (Notification.permission === "denied") {
     box.append(msg("Notifications are blocked for this site in the browser settings."));
   } else if (load(NOTIFY_KEY, false) && Notification.permission === "granted") {
@@ -742,7 +742,7 @@ function renderHidpp() {
   body.replaceChildren();
   const devices = server.status?.hidpp || [];
   if (!devices.length) {
-    body.append(el("tr", {}, el("td", { colspan: "4", class: "msg" }, "No Logitech HID++ devices found (or the server can't open the receiver).")));
+    body.append(el("tr", {}, el("td", { colspan: "4", class: "msg" }, "No Logitech HID++ devices found, or the server can't open the receiver.")));
     return;
   }
   for (const d of devices) {
