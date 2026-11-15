@@ -11,9 +11,13 @@ what the running server reports in $DESKFLOW_STATUS_DIR/status.json.
   file is put back.
 - Computers live in the settings INI and input options in an env file next
   to it. The server reads both only at startup, so saving them restarts it.
+- POST /api/keystroke asks the server, over its IPC socket, to press and
+  release a key on some computers, for other programs on this machine.
 
 Standard library only. Listens on 127.0.0.1 by default; put it behind
-`tailscale serve` or an SSH tunnel rather than exposing it on the LAN.
+`tailscale serve` or an SSH tunnel rather than exposing it on the LAN. It
+also listens on a unix socket in the status dir, for local programs and
+containers that mount the runtime dir.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ import os
 import re
 import select
 import signal
+import socket
+import socketserver
 import subprocess
 import tempfile
 import threading
@@ -54,6 +60,8 @@ KEEP_BACKUPS = 20
 HYPERX_IDS = ("03F0:000006BE", "03F0:000002CC")
 HEADSET_INTERVAL = 300  # seconds between battery reads
 MAX_BODY = 64 * 1024
+CORE_TIMEOUT = 3.0  # seconds to wait for the server's IPC reply
+KEYS_BAD = re.compile(r"[,():=\s]|[^\x21-\x7e]")
 
 
 class ApiError(Exception):
@@ -227,8 +235,9 @@ def build_conf(cells: dict[str, list[int]], options: list[str], other: list[str]
 
 
 class App:
-    def __init__(self, settings: Path, status_dir: Path, unit: str, static_dir: Path):
+    def __init__(self, settings: Path, status_dir: Path, unit: str, static_dir: Path, core_socket: Path):
         self.settings = settings
+        self.core_socket = core_socket
         self.dir = settings.parent
         self.status_file = status_dir / "status.json"
         self.unit = unit
@@ -684,6 +693,50 @@ class App:
             self.identify_file.unlink(missing_ok=True)
         return {"ok": True}
 
+    def core_command(self, line: str) -> None:
+        """Sends one command to deskflow-core's IPC socket and waits for ok or error=."""
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(CORE_TIMEOUT)
+            try:
+                sock.connect(str(self.core_socket))
+            except OSError as e:
+                raise ApiError(f"can't reach the server at {self.core_socket}: {e.strerror or e}",
+                               HTTPStatus.SERVICE_UNAVAILABLE) from None
+            buf = b""
+            try:
+                sock.sendall(line.encode() + b"\n")
+                while True:
+                    chunk = sock.recv(4096)
+                    if not chunk:
+                        raise ApiError("the server closed the connection", HTTPStatus.BAD_GATEWAY)
+                    buf += chunk
+                    while b"\n" in buf:
+                        reply, buf = buf.split(b"\n", 1)
+                        reply = reply.decode(errors="replace")
+                        if reply == "ok":
+                            return
+                        if reply.startswith("error="):
+                            raise ApiError(reply[len("error="):])
+                        # anything else is a broadcast meant for the GUI
+            except TimeoutError:
+                raise ApiError("the server didn't answer", HTTPStatus.GATEWAY_TIMEOUT) from None
+            except OSError as e:
+                raise ApiError(f"talking to the server failed: {e.strerror or e}", HTTPStatus.BAD_GATEWAY) from None
+
+    def keystroke(self, body: dict) -> dict:
+        keys = body.get("keys")
+        if not isinstance(keys, str) or not keys or len(keys) > 100 or KEYS_BAD.search(keys):
+            raise ApiError('keys must look like "Control+Shift+Alt+M"')
+        computers = body.get("computers")
+        if computers is None:
+            computers = []
+        if not isinstance(computers, list) or not all(
+                isinstance(c, str) and (c == "*" or NAME_RE.fullmatch(c)) for c in computers):
+            raise ApiError('computers must be a list of computer names, or ["*"] for all')
+        line = f"keystroke={keys}" + (f",{':'.join(computers)}" if computers else "")
+        self.core_command(line)
+        return {"ok": True}
+
     def save_input(self, body: dict) -> dict:
         with self.lock:
             values = {}
@@ -727,6 +780,9 @@ def make_handler(app: App):
         def log_message(self, fmt, *args):  # journald adds timestamps
             print(f"{self.address_string()} {fmt % args}", flush=True)
 
+        def address_string(self):
+            return self.client_address[0] if isinstance(self.client_address, tuple) else "unix"
+
         def send_json(self, data, status=HTTPStatus.OK):
             body = json.dumps(data).encode()
             self.send_response(status)
@@ -749,9 +805,9 @@ def make_handler(app: App):
                 elif self.path == "/api/state":
                     self.send_json(app.state())
                 else:
-                    self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                    self.send_json({"ok": False, "error": "not found"}, HTTPStatus.NOT_FOUND)
             except ApiError as e:
-                self.send_json({"error": str(e)}, e.status)
+                self.send_json({"ok": False, "error": str(e)}, e.status)
 
         def do_POST(self):
             routes = {
@@ -761,28 +817,67 @@ def make_handler(app: App):
                 "/api/bindings": app.save_bindings,
                 "/api/identify": app.identify,
                 "/api/batteries": app.save_batteries,
+                "/api/keystroke": app.keystroke,
             }
             route = routes.get(self.path)
             if route is None:
-                return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                return self.send_json({"ok": False, "error": "not found"}, HTTPStatus.NOT_FOUND)
             # A custom header can't be sent cross-site without a CORS preflight,
             # which this server never answers, so other sites can't post here.
             if self.headers.get("X-Deskflow-Webui") != "1":
-                return self.send_json({"error": "missing X-Deskflow-Webui header"}, HTTPStatus.FORBIDDEN)
+                return self.send_json({"ok": False, "error": "missing X-Deskflow-Webui header"}, HTTPStatus.FORBIDDEN)
             length = int(self.headers.get("Content-Length") or 0)
             if length > MAX_BODY:
-                return self.send_json({"error": "request too large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                return self.send_json({"ok": False, "error": "request too large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(body, dict):
                     raise ApiError("expected a JSON object")
                 self.send_json(route(body))
             except json.JSONDecodeError:
-                self.send_json({"error": "invalid JSON"}, HTTPStatus.BAD_REQUEST)
+                self.send_json({"ok": False, "error": "invalid JSON"}, HTTPStatus.BAD_REQUEST)
             except ApiError as e:
-                self.send_json({"error": str(e)}, e.status)
+                self.send_json({"ok": False, "error": str(e)}, e.status)
 
     return Handler
+
+
+class UnixHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_UNIX
+
+    def server_bind(self):
+        path = Path(self.server_address)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_socket():
+            path.unlink()
+        socketserver.TCPServer.server_bind(self)
+        os.chmod(path, 0o660)
+        self.server_name, self.server_port = "localhost", 0
+
+
+def serve_unix(path: Path, handler) -> None:
+    """Serves on a unix socket and binds again when the file disappears, for example
+    when systemd removes the server's runtime directory on a restart."""
+    while True:
+        try:
+            server = UnixHTTPServer(str(path), handler)
+        except OSError as e:
+            print(f"can't listen on {path}: {e}; retrying", flush=True)
+            time.sleep(5)
+            continue
+        inode = path.stat().st_ino
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        print(f"listening on {path}", flush=True)
+        while True:
+            time.sleep(2)
+            try:
+                if path.stat().st_ino == inode:
+                    continue
+            except FileNotFoundError:
+                pass
+            break
+        server.shutdown()
+        server.server_close()
 
 
 def main() -> None:
@@ -794,13 +889,21 @@ def main() -> None:
                         help="the server's DESKFLOW_STATUS_DIR")
     parser.add_argument("--unit", default="deskflow-headless.service", help="systemd user unit of the server")
     parser.add_argument("--listen", default="127.0.0.1:24880", help="address:port to listen on")
+    parser.add_argument("--unix-socket", default=str(Path(runtime) / "deskflow-headless/webui.sock"),
+                        help="unix socket to listen on as well (mode 0660); empty to turn it off")
+    parser.add_argument("--core-socket", type=Path,
+                        default=Path(os.environ.get("TMPDIR") or "/tmp") / "deskflow-core",
+                        help="deskflow-core's IPC socket")
     parser.add_argument("--static", type=Path, default=Path(__file__).resolve().parent,
                         help="directory holding index.html")
     args = parser.parse_args()
 
     host, _, port = args.listen.rpartition(":")
-    app = App(args.settings.expanduser(), args.status_dir, args.unit, args.static)
-    server = ThreadingHTTPServer((host or "127.0.0.1", int(port)), make_handler(app))
+    app = App(args.settings.expanduser(), args.status_dir, args.unit, args.static, args.core_socket)
+    handler = make_handler(app)
+    if args.unix_socket:
+        threading.Thread(target=serve_unix, args=(Path(args.unix_socket), handler), daemon=True).start()
+    server = ThreadingHTTPServer((host or "127.0.0.1", int(port)), handler)
     print(f"listening on http://{host}:{port}/ for {app.settings}", flush=True)
     server.serve_forever()
 

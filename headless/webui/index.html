@@ -71,6 +71,9 @@ a { color: var(--link); }
 .notify-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px; }
 .notify-row label { display: flex; gap: 6px; align-items: center; margin: 0; font-size: 14px; color: var(--text); }
 .notify-row input[type=number] { width: 4.5em; }
+.ks-row { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 8px; }
+.ks-row > div { flex: 1 1 220px; }
+.ks-row input { width: 100%; }
 main section { padding: 24px 0; border-bottom: 1px solid var(--border); }
 main section:last-child { border-bottom: 0; }
 h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
@@ -189,6 +192,18 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 12px; }
       <summary>Other server options</summary>
       <p class="hint">Lines from the options section that aren't hotkeys, one per line, in Deskflow's config syntax.</p>
       <textarea id="other-options" spellcheck="false"></textarea>
+    </details>
+    <details>
+      <summary>Send a keystroke now</summary>
+      <p class="hint">Presses and releases a key combination on the computers listed, like a keystroke hotkey action. Without computers it goes to the one with the cursor. Other programs on this server can do the same through POST /api/keystroke.</p>
+      <div class="ks-row">
+        <div><label for="ks-keys">Keys</label><input id="ks-keys" placeholder="Control+Shift+Alt+M" spellcheck="false"></div>
+        <div><label for="ks-computers">Computers</label><input id="ks-computers" placeholder="sage, sage-dev, or * for all" spellcheck="false"></div>
+      </div>
+      <div class="actions">
+        <button id="ks-send">Send</button>
+        <span class="msg" id="ks-msg" role="status"></span>
+      </div>
     </details>
 
     <div class="actions">
@@ -646,6 +661,19 @@ async function saveLayout() {
   }
 }
 
+async function sendKeystroke() {
+  const keys = document.getElementById("ks-keys").value.trim();
+  const computers = document.getElementById("ks-computers").value.split(/[,:\s]+/).filter(Boolean);
+  if (!keys) return setMsg("ks-msg", "Enter the keys, for example Control+Shift+Alt+M.", true);
+  setMsg("ks-msg", "Sending…");
+  try {
+    await api("/api/keystroke", computers.length ? { keys, computers } : { keys });
+    setMsg("ks-msg", `Sent to ${computers.length ? computers.join(", ") : "the computer with the cursor"}.`);
+  } catch (e) {
+    setMsg("ks-msg", e.message, true);
+  }
+}
+
 // --- computers ------------------------------------------------------------------
 
 function resetComputersDraft() {
@@ -1022,6 +1050,7 @@ document.getElementById("add-hotkey").addEventListener("click", () => {
 });
 document.getElementById("other-options").addEventListener("input", (e) => { draft.other = e.target.value; markLayoutDirty(); });
 document.getElementById("save-layout").addEventListener("click", saveLayout);
+document.getElementById("ks-send").addEventListener("click", sendKeystroke);
 document.getElementById("discard-layout").addEventListener("click", () => { resetLayoutDraft(); setMsg("layout-msg", ""); });
 document.getElementById("add-computer").addEventListener("click", () => {
   computersDraft.push({ name: "", aliases: "" });
