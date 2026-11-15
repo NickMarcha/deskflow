@@ -366,10 +366,15 @@ class App:
         if pid <= 0:
             return {"ok": True, "note": "server is not running; it will load the file when it starts"}
         before = self.reload_marker()
-        os.kill(pid, signal.SIGHUP)
         if self.status() is None:
-            return {"ok": True, "note": "server has no status file, so the reload could not be confirmed"}
-        return self.wait_reload(before)
+            # without a status file there's no way to tell a reload from a crash
+            raise ApiError("The server has no status file (DESKFLOW_STATUS_DIR), so changes can't be applied safely.")
+        os.kill(pid, signal.SIGHUP)
+        result = self.wait_reload(before)
+        if result is None and self.main_pid() != pid:
+            raise ApiError("The server restarted instead of reloading its config. "
+                           "Its deskflow-core is probably too old to handle SIGHUP.")
+        return result
 
     def restart(self) -> bool:
         subprocess.run(["systemctl", "--user", "restart", self.unit], capture_output=True, timeout=20)
@@ -419,9 +424,13 @@ class App:
             self.backup(conf_path)
             atomic_write(conf_path, build_conf(cells, options, other))
             atomic_write(self.layout_file, json.dumps({"cells": cells}, indent=2) + "\n")
-            result = self.hup()
-            if result and result.get("ok"):
-                return {"ok": True, "note": result.get("note", "applied; clients stayed connected")}
+            problem = "The server rejected the new config"
+            try:
+                result = self.hup()
+                if result and result.get("ok"):
+                    return {"ok": True, "note": result.get("note", "applied; clients stayed connected")}
+            except ApiError as e:
+                problem = str(e).rstrip(".")
 
             # put the old file back and reload it
             atomic_write(conf_path, old_conf)
@@ -429,9 +438,12 @@ class App:
                 self.layout_file.unlink(missing_ok=True)
             else:
                 atomic_write(self.layout_file, old_layout)
-            self.hup()
-            errors = [l for l in self.journal_tail(20) if "configuration" in l or "ERROR" in l][-3:]
-            raise ApiError("The server rejected the new config, so the previous one is back in place."
+            try:
+                self.hup()
+            except ApiError:
+                pass
+            errors = [re.sub(r"^\[[^]]*\] ", "", l) for l in self.journal_tail(20) if "ERROR" in l][-2:]
+            raise ApiError(f"{problem}, so the previous one is back in place."
                            + ("\n" + "\n".join(errors) if errors else ""))
 
     def save_computers(self, body: dict) -> dict:

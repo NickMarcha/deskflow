@@ -514,7 +514,8 @@ function renderInputFields() {
 function renderDevices() {
   const body = document.getElementById("devices");
   body.replaceChildren();
-  const devices = server.status?.devices || [];
+  const eventNo = (d) => Number(/(\d+)$/.exec(d.path)?.[1] ?? 0);
+  const devices = [...(server.status?.devices || [])].sort((a, b) => eventNo(a) - eventNo(b));
   if (!devices.length) {
     body.append(el("tr", {}, el("td", { colspan: "5", class: "msg" }, "The server hasn't reported any devices.")));
     return;

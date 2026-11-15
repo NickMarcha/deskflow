@@ -18,20 +18,30 @@ The `headless` branch carries a short stack of commits on top of the latest upst
 - `src/lib/platform/EvdevEventQueueBuffer.{h,cpp}`: wakes Deskflow's event loop on the libinput fd.
 - `ServerApp::createComputer()` picks the backend when `DESKFLOW_BACKEND=evdev` is set. Without it, Deskflow behaves exactly like upstream.
 - `EiKeyState::keyRepeats()`: a small helper the backend uses.
+- `src/lib/common/HeadlessStatus.{h,cpp}`: when `DESKFLOW_STATUS_DIR` is set, the server writes `status.json` there: connected clients and their screen sizes, which computer has the cursor, every input device and whether it's used, and the result of the last config reload. Nothing is written when the variable is unset.
+- `deskflow-core` blocks SIGHUP before Qt starts its threads. Upstream already reloads the server config on SIGHUP, but in 1.27 the signal can land on a Qt thread and kill the process instead.
+- `headless/webui/`: the web UI (below). `headless/systemd/`: user units for the server and the web UI. Both are installed by the `.deb`.
 - `.github/workflows/headless-*.yml`, this file and a banner on the README.
 
 Clients are unchanged. Use stock Deskflow on Windows, macOS and Linux.
 
 ## Running it
 
+The `.deb` installs systemd user units. Put the settings in `~/.config/deskflow-headless/server.ini` (computers, port, TLS) and the layout in the server config file it points to, then:
+
 ```sh
-DESKFLOW_BACKEND=evdev QT_QPA_PLATFORM=offscreen \
-  deskflow-core server -s ~/.config/Deskflow/headless.conf
+systemctl --user enable --now deskflow-headless deskflow-headless-webui
+loginctl enable-linger "$USER"   # start at boot, without a login
 ```
 
-The user needs read access to `/dev/input/event*` (the `input` group on Debian).
+The user needs read access to `/dev/input/event*` (the `input` group on Debian). By hand, without the units:
 
-Options, read once at startup (environment variables for now):
+```sh
+DESKFLOW_BACKEND=evdev QT_QPA_PLATFORM=offscreen \
+  deskflow-core server -s ~/.config/deskflow-headless/server.ini
+```
+
+Options, read once at startup. The unit loads them from `~/.config/deskflow-headless/env`, which the web UI writes:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -45,6 +55,16 @@ Options, read once at startup (environment variables for now):
 Only devices udev tags as a keyboard or mouse are considered. Headset volume buttons and HDMI-CEC remotes show up as "keys" but not as keyboards, so they're left alone.
 
 In the server config, don't link anything into the Pi's own screen if you never want the cursor to land there, or use hotkeys such as `keystroke(control+alt+right) = switchToScreen(desk)`.
+
+## Web UI
+
+`deskflow-headless-webui` is one Python file (standard library only) and one HTML page. It listens on `127.0.0.1:24880`. To reach it from other machines, put it behind something that controls who may connect, for example `tailscale serve --bg --https=8443 http://127.0.0.1:24880`, or use an SSH tunnel. It has no login of its own.
+
+- **Layout and hotkeys.** Drag computers on a grid; neighbouring cells are linked. Saving writes the server config and sends SIGHUP, so clients stay connected. If the server rejects the file, the previous one is put back and reloaded. Grid positions are kept in `webui-layout.json`.
+- **Computers.** Names and aliases in the settings INI. The server reads these only at startup, so saving restarts it.
+- **Input devices.** What the server found and whether it uses each one, plus the options above. Saving restarts the server.
+
+Every save keeps the previous file in `~/.config/deskflow-headless/backups/` (the last 20 of each).
 
 ## Staying in sync with upstream
 
@@ -63,4 +83,4 @@ git push --force-with-lease origin headless
 
 ## Status
 
-Working in a spike on a Raspberry Pi 4 (Debian 13, Deskflow 1.27.0): edge switching, typing with modifiers, key repeat, buttons, wheel, hotkeys and hotplug all verified against a stock client. Still to come: real-hardware stability testing, settings keys instead of environment variables, and then asking upstream whether they want the backend.
+In daily use on a Raspberry Pi 4 (Debian 13, Deskflow 1.27.0) since November 2026, with three stock clients: one Windows, two KDE Wayland. Edge switching, typing with modifiers, key repeat, buttons, wheel, hotkeys and hotplug all work. Still to come: switching computers from the web UI, settings keys instead of environment variables, and then asking upstream whether they want the backend.
