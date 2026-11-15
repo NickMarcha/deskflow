@@ -85,6 +85,10 @@ KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0660", GR
 
 `DESKFLOW_EVDEV_HIDPP=1` goes further: it keeps the node open and diverts bound controls, so a control like the thumb button becomes an input of its own (bind it in the web UI) instead of borrowing another button's identity through a remap. It's off by default because of a Raspberry Pi 4 limitation: its USB controller services only three of a Logi Bolt receiver's four 1 ms interrupt endpoints at once, and with all four active the mouse stops moving. `headless/udev/71-logitech-bolt-no-touchpad.rules` disables the receiver's interface 3 (only used by Logitech touchpads), which leaves room. `headless/udev/70-logitech-hidraw.rules` gives the `input` group access to the hidraw nodes.
 
+## Other batteries
+
+The web UI also shows batteries the kernel reports for USB HID devices (`/sys/class/power_supply`, for example keyboards that send "Battery Strength"), keyed by USB port so two devices of the same model stay apart, and the HyperX Cloud III S Wireless headset over its vendor HID protocol (read every 5 minutes). The headset's dongle only answers on Linux when the kernel asks for its full configuration descriptor at the first enumeration: add `usbcore.quirks=03f0:06be:r` (or `03f0:02cc:r`) to the kernel command line, then power-cycle the dongle once. See `headless/udev/72-hyperx-cloud3s-hidraw.rules`.
+
 ## Staying in sync with upstream
 
 - `master` is a plain mirror of upstream. Nothing is committed to it.

@@ -1,0 +1,7 @@
+# HyperX Cloud III S Wireless dongle: let the input group (the headless web UI)
+# read the headset battery over the vendor HID interface. Copy to /etc/udev/rules.d/.
+# The dongle also needs usbcore.quirks=03f0:06be:r (or 03f0:02cc:r) on the kernel
+# command line, kernel 6.18.y with USB_QUIRK_WINDOWS_CONFIG_REQ_SIZE or newer;
+# without it the dongle accepts commands but never answers.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="06be", MODE="0660", GROUP="input"
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="02cc", MODE="0660", GROUP="input"
