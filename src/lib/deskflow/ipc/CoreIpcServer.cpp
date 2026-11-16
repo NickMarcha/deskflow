@@ -42,7 +42,18 @@ static bool isSameUser(const QLocalSocket *socket)
 #endif
 }
 
-CoreIpcServer::CoreIpcServer(QObject *parent) : IpcServer(parent, kCoreIpcName, QStringLiteral("core"))
+namespace {
+/// A headless server (DESKFLOW_STATUS_DIR set) listens in its status directory, next to
+/// status.json, so a manager that only sees that directory (Bragi) can reach it. Otherwise
+/// the usual name, which the GUI connects to.
+QString coreIpcName()
+{
+  const auto statusDir = qEnvironmentVariable("DESKFLOW_STATUS_DIR");
+  return statusDir.isEmpty() ? QString(kCoreIpcName) : statusDir + QStringLiteral("/core.sock");
+}
+} // namespace
+
+CoreIpcServer::CoreIpcServer(QObject *parent) : IpcServer(parent, coreIpcName(), QStringLiteral("core"))
 {
   assert(s_instance == nullptr);
   s_instance = this;
