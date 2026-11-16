@@ -16,6 +16,7 @@
 #include "deskflow/ClientApp.h"
 #include "deskflow/ServerApp.h"
 #include "deskflow/ipc/CoreIpcServer.h"
+#include "server/InputFilter.h"
 
 #if defined(Q_OS_WIN)
 #include "arch/win32/ArchMiscWindows.h"
@@ -156,6 +157,10 @@ int main(int argc, char **argv)
         Qt::DirectConnection
     );
   }
+  // notify(name) hotkey actions reach programs listening on the IPC socket (Bragi)
+  InputFilter::NotifyAction::setHandler([ipcServer](const std::string &name) {
+    ipcServer->notifyAction(QString::fromStdString(name));
+  });
   ipcServer->listen();
 
   QThread coreThread;

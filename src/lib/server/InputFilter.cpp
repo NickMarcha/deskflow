@@ -337,6 +337,36 @@ void InputFilter::SwitchInDirectionAction::perform(const Event &event)
   );
 }
 
+InputFilter::NotifyAction::Handler InputFilter::NotifyAction::s_handler;
+
+InputFilter::NotifyAction::NotifyAction(const std::string &name) : m_name(name)
+{
+  // do nothing
+}
+
+void InputFilter::NotifyAction::setHandler(Handler handler)
+{
+  s_handler = std::move(handler);
+}
+
+InputFilter::Action *InputFilter::NotifyAction::clone() const
+{
+  return new NotifyAction(*this);
+}
+
+std::string InputFilter::NotifyAction::format() const
+{
+  return deskflow::string::sprintf("notify(%s)", m_name.c_str());
+}
+
+void InputFilter::NotifyAction::perform(const Event &)
+{
+  LOG_DEBUG("notify action: %s", m_name.c_str());
+  if (s_handler) {
+    s_handler(m_name);
+  }
+}
+
 InputFilter::SwitchToNextComputerAction::SwitchToNextComputerAction(IEventQueue *events) : m_events(events)
 {
   // do nothing

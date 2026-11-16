@@ -141,6 +141,21 @@ void CoreIpcServer::processSwitch(QLocalSocket *clientSocket, const QString &com
   });
 }
 
+void CoreIpcServer::notifyAction(const QString &name)
+{
+  QMetaObject::invokeMethod(
+      this,
+      [this, name] {
+        if (hasClients()) {
+          broadcastCommand(QStringLiteral("action"), name);
+        } else {
+          LOG_DEBUG("core ipc server: nobody listening for action %s", name.toUtf8().constData());
+        }
+      },
+      Qt::QueuedConnection
+  );
+}
+
 void CoreIpcServer::reply(QLocalSocket *clientSocket, const QString &error)
 {
   writeToClientSocket(clientSocket, error.isEmpty() ? QStringLiteral("ok") : QStringLiteral("error=%1").arg(error));

@@ -80,6 +80,8 @@ printf 'switch=sage\n' | socat - UNIX-CONNECT:/run/user/1000/deskflow-headless/c
 
 `keystroke` uses the config file's key syntax; the computers take names or aliases, `*` means every connected client, and leaving them out sends the keys to the computer with the cursor. Upstream makes its IPC socket world-writable for its GUI, so the server only accepts these commands from processes of its own user (checked with `SO_PEERCRED`). The key runs through `InputFilter::KeystrokeAction`, the code that runs a `keystroke()` hotkey action.
 
+A hotkey can also tell such a program that it was pressed, instead of doing something inside Deskflow: `keystroke(Control+Alt+F8) = notify(mute)` sends `action=mute` to every client connected to the socket at that moment (none connected: nothing happens, it isn't queued). Bragi keeps a connection open for these and runs its own action for the name.
+
 Stock Linux clients that use libei (KDE and GNOME on Wayland) drop these keys while the cursor is on another computer, reported upstream as deskflow/deskflow#10393. Windows clients get them either way.
 
 ## Logitech devices (HID++)
