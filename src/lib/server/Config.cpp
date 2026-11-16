@@ -16,7 +16,9 @@
 #include "net/SocketException.h"
 #include "server/Server.h"
 
+#include <algorithm>
 #include <assert.h>
+#include <cctype>
 #include <cstdlib>
 #include <istream>
 #include <ostream>
@@ -870,6 +872,19 @@ void Config::parseAction(
     }
 
     action = new InputFilter::SwitchInDirectionAction(m_events, direction);
+  }
+
+  else if (name == "notify") {
+    // notify(name): letters, digits, '_', '-', '.'; another program on the server
+    // hears `action=name` on the core's IPC socket
+    const bool valid = args.size() == 1 && !args[0].empty() && args[0].size() <= 64 &&
+                       std::all_of(args[0].begin(), args[0].end(), [](unsigned char c) {
+                         return std::isalnum(c) || c == '_' || c == '-' || c == '.';
+                       });
+    if (!valid) {
+      throw ServerConfigReadException(s, "syntax for action: notify(name)");
+    }
+    action = new InputFilter::NotifyAction(args[0]);
   }
 
   else if (name == "switchToNextScreen") {

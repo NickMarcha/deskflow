@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include "base/DirectionTypes.h"
 #include "deskflow/IPlatformComputer.h"
 #include "deskflow/KeyTypes.h"
@@ -207,6 +209,29 @@ public:
   private:
     Direction m_direction;
     IEventQueue *m_events;
+  };
+
+  // NotifyAction: tells another program on the server (over the core's IPC
+  // socket, as `action=<name>`) that a hotkey fired, so it can run an action
+  // of its own. Does nothing inside Deskflow.
+  class NotifyAction : public Action
+  {
+  public:
+    using Handler = std::function<void(const std::string &name)>;
+
+    explicit NotifyAction(const std::string &name);
+
+    //! Where notifications go; set once by the app (deskflow-core).
+    static void setHandler(Handler handler);
+
+    // Action overrides
+    Action *clone() const override;
+    std::string format() const override;
+    void perform(const Event &) override;
+
+  private:
+    std::string m_name;
+    static Handler s_handler;
   };
 
   // SwitchToNextComputerAction

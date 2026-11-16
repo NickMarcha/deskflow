@@ -41,6 +41,14 @@ Q_SIGNALS:
    */
   void switchRequested(const QString &computer, const KeystrokeReply &reply);
 
+public:
+  /**
+   * Broadcasts `action=name` (a notify(name) hotkey action fired) to the connected clients.
+   * Dropped when nobody is connected: a hotkey pressed earlier must not run later. Call from
+   * any thread.
+   */
+  void notifyAction(const QString &name);
+
 private:
   void processCommand(QLocalSocket *clientSocket, const QString &command, const QStringList &parts) override;
   void processKeystroke(QLocalSocket *clientSocket, const QString &keystroke);

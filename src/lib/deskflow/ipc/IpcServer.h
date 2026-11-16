@@ -24,6 +24,11 @@ public:
 
   void listen();
   void broadcastCommand(const QString &command, const QString &args = "");
+  //! Whether any client is connected now (broadcastCommand queues messages otherwise).
+  bool hasClients() const
+  {
+    return !m_clients.isEmpty();
+  }
 
 Q_SIGNALS:
   void logLevelChanged(const QString &logLevel);
