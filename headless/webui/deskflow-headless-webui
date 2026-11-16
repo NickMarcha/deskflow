@@ -836,13 +836,16 @@ def main() -> None:
     parser.add_argument("--listen", default="127.0.0.1:24880", help="address:port to listen on")
     parser.add_argument("--unix-socket", default=str(Path(runtime) / "deskflow-headless/webui.sock"),
                         help="unix socket to listen on as well (mode 0660); empty to turn it off")
-    parser.add_argument("--core-socket", type=Path,
-                        default=Path(os.environ.get("TMPDIR") or "/tmp") / "deskflow-core",
-                        help="deskflow-core's IPC socket")
+    parser.add_argument("--core-socket", type=Path, default=None,
+                        help="deskflow-core's IPC socket (default: core.sock in the status dir, "
+                             "where a headless server listens, else $TMPDIR/deskflow-core)")
     parser.add_argument("--static", type=Path, default=Path(__file__).resolve().parent,
                         help="directory holding index.html")
     args = parser.parse_args()
 
+    if args.core_socket is None:
+        in_status = args.status_dir / "core.sock"
+        args.core_socket = in_status if in_status.exists() else Path(os.environ.get("TMPDIR") or "/tmp") / "deskflow-core"
     host, _, port = args.listen.rpartition(":")
     app = App(args.settings.expanduser(), args.status_dir, args.unit, args.static, args.core_socket)
     handler = make_handler(app)
