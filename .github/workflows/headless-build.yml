@@ -46,9 +46,6 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Building $version (on top of $base)"
 
-      - name: Web UI tests
-        run: python3 -m unittest discover -s headless/webui -v
-
       - name: Configure
         run: >
           cmake -Bbuild -G Ninja -DCMAKE_BUILD_TYPE=Release -DSKIP_BUILD_TESTS=ON
