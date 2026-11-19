@@ -9,6 +9,7 @@
 #include "server/Config.h"
 
 #include "base/IEventQueue.h"
+#include "base/Log.h"
 #include "common/KeyboardModifier.h"
 #include "deskflow/KeyMap.h"
 #include "deskflow/KeyTypes.h"
@@ -395,6 +396,15 @@ bool Config::hasLockToComputerAction() const
   return m_hasLockToComputerAction;
 }
 
+const MonitorShape *Config::getMonitorShape(const std::string &name) const
+{
+  CellMap::const_iterator index = m_map.find(getCanonicalName(name));
+  if (index == m_map.end() || index->second.m_monitors.isPlain()) {
+    return nullptr;
+  }
+  return &index->second.m_monitors;
+}
+
 bool Config::operator==(const Config &x) const
 {
   if (m_deskflowAddress != x.m_deskflowAddress) {
@@ -498,6 +508,7 @@ void Config::readSection(ConfigReadContext &s)
   static const char s_screens[] = "screens";
   static const char s_links[] = "links";
   static const char s_aliases[] = "aliases";
+  static const char s_monitors[] = "monitors";
 
   std::string line;
   if (!s.readLine(line)) {
@@ -530,6 +541,8 @@ void Config::readSection(ConfigReadContext &s)
     readSectionAliases(s);
   } else if (name == s_links) {
     readSectionLinks(s);
+  } else if (name == s_monitors) {
+    readSectionMonitors(s);
   } else {
     throw ServerConfigReadException(s, "unknown section name \"%{1}\"", name);
   }
@@ -728,6 +741,40 @@ void Config::readSectionAliases(ConfigReadContext &s)
     }
   }
   throw ServerConfigReadException(s, "unexpected end of aliases section");
+}
+
+void Config::readSectionMonitors(ConfigReadContext &s)
+{
+  // Each computer's real monitors, in percent of its outline (Bragi
+  // writes this from the tray apps' monitor reports):
+  //   sage = 0,0,64.18,100 64.18,24.72,35.82,75
+  // A computer that isn't in the config is skipped, so a stale line
+  // can't stop the server from starting.
+  std::string line;
+  while (s.readLine(line)) {
+    if (line == "end") {
+      return;
+    }
+    const std::string::size_type eq = line.find('=');
+    if (eq == std::string::npos) {
+      throw ServerConfigReadException(s, "expected computer = monitors");
+    }
+    std::string computer = line.substr(0, eq);
+    computer.erase(computer.find_last_not_of(" \t") + 1);
+    MonitorShape shape;
+    std::string error;
+    if (!MonitorShape::parse(line.substr(eq + 1), shape, error)) {
+      throw ServerConfigReadException(s, "bad monitors for \"" + computer + "\": " + error);
+    }
+    const std::string name = getCanonicalName(computer);
+    CellMap::iterator index = m_map.find(name);
+    if (index == m_map.end()) {
+      LOG_WARN("monitors for unknown computer \"%s\" ignored", computer.c_str());
+      continue;
+    }
+    index->second.m_monitors = shape;
+  }
+  throw ServerConfigReadException(s, "unexpected end of monitors section");
 }
 
 InputFilter::Condition *
@@ -1244,6 +1291,11 @@ bool Config::Cell::operator==(const Cell &x) const
     return false;
   }
 
+  // compare monitor shapes
+  if (!(m_monitors == x.m_monitors)) {
+    return false;
+  }
+
   // compare links
   if (m_neighbors.size() != x.m_neighbors.size()) {
     return false;
@@ -1305,6 +1357,21 @@ std::ostream &operator<<(std::ostream &s, const Config &config)
     }
   }
   s << "end" << std::endl;
+
+  // monitors section
+  bool anyMonitors = false;
+  for (const auto &computer : config) {
+    if (const MonitorShape *shape = config.getMonitorShape(computer); shape != nullptr) {
+      if (!anyMonitors) {
+        s << "section: monitors" << std::endl;
+        anyMonitors = true;
+      }
+      s << "\t" << computer.c_str() << " = " << shape->format() << std::endl;
+    }
+  }
+  if (anyMonitors) {
+    s << "end" << std::endl;
+  }
 
   // options section
   s << "section: options" << std::endl;

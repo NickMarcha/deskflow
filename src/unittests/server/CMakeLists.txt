@@ -14,6 +14,14 @@ create_test(
 )
 
 create_test(
+  NAME MonitorShapeTests
+  DEPENDS server
+  LIBS base arch ${extra_libs}
+  SOURCE MonitorShapeTests.cpp
+  WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/src/lib/server"
+)
+
+create_test(
   NAME ServerTests
   DEPENDS server
   LIBS base arch ${extra_libs}
