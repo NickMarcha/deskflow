@@ -24,6 +24,7 @@
 #include "server/ClientListener.h"
 #include "server/ClientProxy.h"
 #include "server/ClientProxyUnknown.h"
+#include "server/MonitorShape.h"
 #include "server/PrimaryClient.h"
 
 #include <QJsonArray>
@@ -313,7 +314,10 @@ void Server::publishStatus() const
   deskflow::headless::updateStatus(
       {{"server", QString::fromStdString(getName(m_primaryClient))},
        {"active", QString::fromStdString(getName(m_active))},
-       {"clients", clients}}
+       {"clients", clients},
+       // what this server's config understands; Bragi writes the monitors
+       // section only when it's listed (MonitorShape.h)
+       {"features", QJsonArray{QStringLiteral("monitors")}}}
   );
 }
 
@@ -470,6 +474,12 @@ void Server::switchComputer(BaseClientProxy *dst, int32_t x, int32_t y, bool for
   int32_t dw;
   int32_t dh;
   dst->getShape(dx, dy, dw, dh);
+
+  // a computer with monitor gaps: never land in one (a hotkey or IPC
+  // switch goes to the middle, which may be off every monitor)
+  if (const MonitorShape *shape = m_config->getMonitorShape(getName(dst)); shape != nullptr) {
+    shape->nearest(dx, dy, dw, dh, x, y);
+  }
 
   // any of these conditions seem to trigger when the portal permission dialog
   // is visible on wayland. this was previously an assert, but that's pretty
@@ -1847,9 +1857,25 @@ void Server::onMouseMoveSecondary(int32_t dx, int32_t dy)
   int32_t ah;
   m_active->getShape(ax, ay, aw, ah);
 
+  // a computer with monitor gaps: stay on its monitors, and leave from
+  // the outer edge of the one the cursor is on (MonitorShape.h)
+  const MonitorShape *shape = m_config->getMonitorShape(getName(m_active));
+  bool shapeStay = false;
+  int32_t stayX = 0;
+  int32_t stayY = 0;
+  if (shape != nullptr) {
+    const MonitorShape::Step step = shape->move(ax, ay, aw, ah, xOld, yOld, m_x, m_y);
+    m_x = step.x;
+    m_y = step.y;
+    stayX = step.stayX;
+    stayY = step.stayY;
+    shapeStay = true;
+  }
+
   // find direction of neighbor and get the neighbor
   bool jump = true;
   BaseClientProxy *newComputer;
+  Direction jumpDir = Direction::NoDirection;
   do {
     // clamp position to computer
     int32_t xc = m_x;
@@ -1919,6 +1945,7 @@ void Server::onMouseMoveSecondary(int32_t dx, int32_t dy)
 
     // try to switch computer.  get the neighbor.
     newComputer = mapToNeighbor(m_active, dir, m_x, m_y);
+    jumpDir = dir;
 
     // see if we should switch
     if (!isSwitchOkay(newComputer, dir, m_x, m_y, xc, yc)) {
@@ -1931,8 +1958,27 @@ void Server::onMouseMoveSecondary(int32_t dx, int32_t dy)
     int32_t newX = m_x;
     int32_t newY = m_y;
 
+    // arriving on a computer with monitor gaps: land on the first
+    // monitor in the cursor's way
+    if (const MonitorShape *dstShape = m_config->getMonitorShape(getName(newComputer)); dstShape != nullptr) {
+      int32_t nx;
+      int32_t ny;
+      int32_t nw;
+      int32_t nh;
+      newComputer->getShape(nx, ny, nw, nh);
+      dstShape->enter(nx, ny, nw, nh, jumpDir, newX, newY);
+    }
+
     // switch computers
     switchComputer(newComputer, newX, newY, false);
+  } else if (shapeStay) {
+    // same computer with monitor gaps: stay on the monitor
+    m_x = stayX;
+    m_y = stayY;
+    if (m_x != xOld || m_y != yOld) {
+      LOG_VERBOSE("move on %s to %d,%d", getName(m_active).c_str(), m_x, m_y);
+      m_active->mouseMove(m_x, m_y);
+    }
   } else {
     // same computer.  clamp mouse to edge.
     m_x = xOld + dx;

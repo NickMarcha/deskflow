@@ -14,6 +14,7 @@
 #include "deskflow/OptionTypes.h"
 #include "net/NetworkAddress.h"
 #include "server/InputFilter.h"
+#include "server/MonitorShape.h"
 
 #include <iosfwd>
 #include <map>
@@ -133,6 +134,7 @@ private:
 
   public:
     ScreenOptions m_options;
+    MonitorShape m_monitors;
   };
   using CellMap = std::map<std::string, Cell, deskflow::string::CaselessCmp>;
   using NameMap = std::map<std::string, std::string, deskflow::string::CaselessCmp>;
@@ -366,6 +368,13 @@ public:
   */
   bool hasLockToComputerAction() const;
 
+  //! Get a computer's real monitors
+  /*!
+  Returns the computer's monitor shape from the monitors section, or
+  nullptr when it has none or its monitors fill its outline.
+  */
+  const MonitorShape *getMonitorShape(const std::string &name) const;
+
   //! Compare configurations
   bool operator==(const Config &) const;
 
@@ -407,6 +416,7 @@ private:
   void readSectionScreens(ConfigReadContext &);
   void readSectionLinks(ConfigReadContext &);
   void readSectionAliases(ConfigReadContext &);
+  void readSectionMonitors(ConfigReadContext &);
 
   InputFilter::Condition *
   parseCondition(const ConfigReadContext &, const std::string &condition, const std::vector<std::string> &args);
