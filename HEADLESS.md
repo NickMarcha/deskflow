@@ -106,7 +106,7 @@ KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0660", GR
 - `master` is a plain mirror of upstream. Nothing is committed to it.
 - `headless` is rebased onto each new upstream release tag. The patch is almost entirely new files, so upstream changes usually break the compile (which CI catches) rather than the rebase.
 - `headless-upstream-check.yml` runs weekly and opens an issue when upstream has a release newer than the one `headless` is based on.
-- `headless-build.yml` builds the Debian trixie arm64 `.deb` on every push to `headless`, and publishes it as a GitHub release when run manually with `release: true`.
+- `headless-build.yml` builds the Debian trixie `.deb` for arm64 and amd64 on every push to `headless`, and publishes both as one GitHub release when run manually with `release: true`.
 
 Rebasing by hand:
 
