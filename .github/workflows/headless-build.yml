@@ -1,4 +1,5 @@
-# Builds the headless fork for the Raspberry Pi (Debian trixie, arm64).
+# Builds the headless fork for Debian trixie on arm64 (Raspberry Pi) and
+# amd64 (an x86 box such as an HP MicroServer).
 name: headless-build
 
 on:
@@ -15,10 +16,22 @@ permissions:
   contents: write
 
 jobs:
-  deb-trixie-arm64:
-    runs-on: ubuntu-24.04-arm
+  deb:
+    name: deb-trixie-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     container: debian:trixie
     timeout-minutes: 40
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      base: ${{ steps.version.outputs.base }}
     steps:
       - name: Install dependencies
         run: |
@@ -70,18 +83,27 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: deskflow-${{ steps.version.outputs.version }}-debian-trixie-aarch64
+          name: deskflow-${{ steps.version.outputs.version }}-debian-trixie-${{ matrix.arch }}
           path: ${{ steps.deb.outputs.path }}
 
+  # One release with both packages, once both built: a release step in each
+  # build job would race to create the same release.
+  release:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+    needs: deb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: deskflow-*
+          path: dist
+          merge-multiple: true
+
       - name: Release
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          apt-get install -y -qq --no-install-recommends gh >/dev/null
-          tag="headless-v${{ steps.version.outputs.version }}"
-          gh release create "$tag" "${{ steps.deb.outputs.path }}" \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "$tag" \
-            --notes "Headless server build on top of upstream ${{ steps.version.outputs.base }}. See HEADLESS.md."
+          ls -la dist
+          tag="headless-v${{ needs.deb.outputs.version }}"
+          gh release create "$tag" dist/*.deb             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"             --title "$tag"             --notes "Headless server build on top of upstream ${{ needs.deb.outputs.base }}, for Debian trixie on arm64 and amd64. See HEADLESS.md."
